@@ -653,6 +653,30 @@ const { ALL_UNLOCKS } = __m.rules;
 const BASIC = ["wall", "village", "builder", "spear", "drill"];
 
 const ISLANDS = [
+  // First Landing (11-01, outside review: "teach by doing in the first minute"): the opening tutorial a first launch
+  // goes straight into. No rival, no fighting: one builder, one capital, a sea that rises every 2 turns. Wall the
+  // capital once and it stays dry. Not on the chart, never in Skirmish or Daily (ready: false)
+  {
+    id: "landing", name: "First Landing", clan: "the sea", chart: { x: 10, y: 92 }, ready: false, solo: true,
+    story: { intro: "The water is coming. Keep your home dry.", win: "Your home stayed dry. The sea is rising everywhere." },
+    map: { mirror: false, rows: [
+      "..111..",
+      ".11421.",
+      "1123211",
+      ".12421.",
+      "..111..",
+    ] },
+    start: { capital: [2, 3], units: [["builder", 2, 2]] },
+    rises: [2, 4, 6], lastTurn: 7,
+    res: { food: 3, stone: 3 },
+    unlocks: ["wall"],
+    rival: { attack: 1, expand: 1, walls: 1 },
+    goals: [],
+    coach: "landing",
+    look: { bg: "#1f3a2c", deep: "#3f8fb0", shallow: "#7fcad0", drowned: "#5fb0c0", side1: "#6a4a2c", side2: "#8f6a42",
+      top: { 1: "#d4dc84", 2: "#93c95a", 3: "#6aa94a", 4: "#8e9a7a", 5: "#d3d6c4" }, grain: "#e9c24e",
+      scenery: { 1: "crops", 2: "crops", 3: "rocks", 4: "rocks", 5: "snow" } },
+  },
   {
     id: "lowmere", name: "Lowmere", clan: "the Reedfolk", chart: { x: 18, y: 84 }, ready: true,
     story: {
@@ -946,7 +970,10 @@ const DIFFICULTY = {
   easy: { label: "Easy", hint: "For your first games: plenty of food and stone, sturdier villages, and a rival that walls late and attacks less.", youStart: { food: 8, stone: 4 }, youIncome: { food: 2, stone: 2 }, rivalStart: { food: 0, stone: 0 }, rivalIncome: { food: 0, stone: 0 }, rivalLoose: true, rivalBrain: { attack: 0.3 },
     // 11-01 v6 (tester: a village defender lost 7 a rival turn and healed 4, so the village fell 3 times): your pieces in
     // your own villages take 2 less from each hit and heal 2 more
-    youFx: [{ key: "guard", add: 2 }, { key: "heal.home", add: 2 }] },
+    youFx: [{ key: "guard", add: 2 }, { key: "heal.home", add: 2 }],
+    // 11-01 (tester: three storms after turn 12 sank an 18-point lead on Last Dry Land): lighter storms on Easy, one
+    // cloud a wave, 3 turns' warning, walls don't wear. Beginner keeps more land: Crown 45 -> 55, Storm Reach 28 -> 34
+    storm: { fronts: 1, big: 1, notice: 3, erosion: 0 } },
   // 10-30 (MO: Hard on The Sunken Crown was easy): Normal gets what was Hard; Hard thinks two rises ahead
   // and presses its attacks. No extra food or stone for the rival on any level (MO: no bonus)
   normal: { label: "Normal", hint: "An even fight: the rival walls early, finishes off hurt pieces, guards its villages.", youStart: { food: 0, stone: 0 }, youIncome: { food: 0, stone: 0 }, rivalStart: { food: 0, stone: 0 }, rivalIncome: { food: 0, stone: 0 }, rivalSmart: true, rivalLook: 1, rivalLookWeight: 2 },
@@ -1092,6 +1119,7 @@ function newGame(island, difficulty = "normal", seed = Math.floor(Math.random() 
       given: (island.given || []).slice(),
       // Endless (modes.js): the match only ends when you lose your last village
       endless: !!island.endless,
+      solo: !!island.solo,
       // extra income each turn on top of villages and buildings (hard difficulty gives the rival some)
       bonus: [{ ...dif.youIncome }, { ...dif.rivalIncome }],
       rivalStyle: { ...island.rival },
@@ -1100,7 +1128,8 @@ function newGame(island, difficulty = "normal", seed = Math.floor(Math.random() 
       // on Easy it plays looser: it walls late and never ahead
       rivalLoose: !!dif.rivalLoose,
       // how many sea rises ahead each side looks when it weighs a move (0 = no look-ahead; ai.js)
-      storm: island.storm || null,
+      // storm settings: the rules, then the island's own, then the level's (Easy: lighter storms)
+      storm: island.storm || dif.storm ? { ...(island.storm || {}), ...(dif.storm || {}) } : null,
       // the peak (islands with landmark: true): the highest tiles of the map
       landmark: !!island.landmark, peakFrom: (island.landmark && island.landmark.from) || WIN.peakFrom,
       look: [0, dif.rivalLook || 0],
@@ -1132,7 +1161,8 @@ function newGame(island, difficulty = "normal", seed = Math.floor(Math.random() 
     for (const [r, c] of s.villages || []) addTown(st, where([r, c]), p, false);
   };
   place(0, mine, false);
-  if (theirs) place(1, theirs, false); else place(1, mine, true);
+  // solo islands (First Landing, the opening tutorial): no rival on the board, only the sea
+  if (!island.solo) { if (theirs) place(1, theirs, false); else place(1, mine, true); }
   // ground (rules.js GROUND): forest and marsh tiles, listed for one half of a mirrored map
   st.ground = new Array(b.N).fill(null);
   for (const [kind, list] of Object.entries(island.terrain || {})) for (const rc of list) {
@@ -1800,7 +1830,7 @@ function finish(st) {
 }
 function checkElimination(st) {
   if (st.over) return;
-  for (const p of [0, 1]) if (!st.towns.some(t => t.owner === p) && !(st.cfg.endless && p === 1)) {
+  for (const p of [0, 1]) if (!st.towns.some(t => t.owner === p) && !((st.cfg.endless || st.cfg.solo) && p === 1)) {
     st.over = true; st.winner = 1 - p;
     st.events.push({ type: "end", reason: "towns", scores: [score(st, 0), score(st, 1)] });
     return;
@@ -2608,7 +2638,7 @@ function writeSave(data) {
 const starsOn = (save, id) => (save.islands[id] && save.islands[id].stars) || 0;
 const wonIsland = (save, id) => !!(save.islands[id] && save.islands[id].won);
 // playtest build: every island is open. Set to false for release, so each island opens when the one before it is won
-const OPEN_ALL = true;
+const OPEN_ALL = false;
 function isOpen(save, id) {
   const k = ISLANDS.findIndex(l => l.id === id);
   if (OPEN_ALL) return k >= 0;
@@ -3664,7 +3694,9 @@ function panel() {
     else html = line((t ? dot(t.owner) : "") + '<span class="name">' + (t ? (t.owner === 0 ? (t.capital ? "Your capital" : "Your village") : (t.capital ? "Rival capital" : "Rival village")) : st.h[i] >= 3 ? "Rocky ground" : "Farmland") + "</span>", floodChip(i) + (!t && E.BUILD.farm.on(st.h[i]) && E.allowed(st, "farm") ? '<span class="hint">farm here: +2 food</span>' : !t && E.BUILD.quarry.on(st.h[i]) && E.allowed(st, "quarry") ? '<span class="hint">quarry here: +2 stone</span>' : ""), "");
   // nothing picked: say what to do, unless the hint line above already does
   } else html = coach !== null || tipNow || situation() ? "" : line('<span class="name">Your move</span>', '<span class="hint">Tap a piece or village</span>', "");
-  if (sellBtn) buttons.push(sellBtn);
+  if (sellBtn && !st.cfg.solo) buttons.push(sellBtn);
+  // an action this island does not have is not a button at all
+  buttons = buttons.filter(x => x[3] !== "Not on this island");
   info.innerHTML = html;
   // more than 3 buttons: they get the full width above the name (phones)
   $("panel").classList.toggle("many", buttons.length > 3);
@@ -3726,6 +3758,15 @@ function wheatSpot() {
   return best;
 }
 const COACH_SETS = {};
+// First Landing: one line at a time, walls only
+COACH_SETS.landing = [
+  { h: "The sea is rising", t: "Tap your builder, the piece with the hammer.",
+    target: () => (myBuilders()[0] || {}).i, done: () => sel && sel.unit && myBuilders().some(u => u.id === sel.unit) },
+  { h: "Go home", t: "Tap your house twice to move in.", target: capital, done: () => myBuilders().some(u => u.i === capital()) },
+  { h: "Wall it", t: "Press Wall +1. A wall keeps it dry one rise longer.", done: () => st.wall[capital()] > 0 },
+  { h: "Watch the sea", t: "Press End turn. Striped land floods next.", done: () => st.turn >= 2 && st.cur === 0 && !busy },
+  { h: "Hold on", t: "Your walled house stays dry. Keep pressing End turn.", ok: true },
+];
 COACH_SETS.basics = [
   { h: "Your builder", t: "Tap the piece with the hammer.",
     target: () => (myBuilders()[0] || {}).i, done: () => sel && sel.unit && myBuilders().some(u => u.id === sel.unit) },
@@ -3892,7 +3933,10 @@ async function playEvents() {
     if (e.type === "rise") {
       const fl = evs[k + 1] && evs[k + 1].type === "flood" ? evs[k + 1] : null;
       sfx.rise(); setSea(1 + e.sea);
+      if (!REDUCED.matches) restartAnim($("board"), "shake");
       await animateRise(e.sea - 1 + .55, e.sea + .55, new Set(fl ? fl.tiles : []));
+      // walls that kept the water out this rise (outside review: make a wall that works feel like it)
+      for (let i = 0; i < st.b.N; i++) if (st.wall[i] > 0 && !st.water[i] && st.h[i] <= st.sea) popup(i, "held!", "#9fd6e6");
       const mineLost = fl ? fl.lostTowns.filter(t => t.owner === 0).length : 0, theirsLost = fl ? fl.lostTowns.filter(t => t.owner === 1).length : 0;
       const piecesLost = fl ? fl.lostUnits.filter(u => u.owner === 0).length : 0;
       toast("Sea " + e.sea + ": " + (fl ? fl.tiles.length : 0) + " tiles gone" + (mineLost ? ", you lost " + mineLost + " village" + (mineLost > 1 ? "s" : "") : "") + (piecesLost ? ", " + piecesLost + " of your pieces drowned" : "") + (theirsLost ? ", the rival lost " + theirsLost : ""), 3400, "sea", mineLost + piecesLost > 0);
@@ -4050,7 +4094,7 @@ $("endTurn").addEventListener("click", async () => {
 // when one side can no longer reach the other, only the sea can change the result: offer to skip ahead
 let cutShown = false;
 function checkCutOff() {
-  if (cutShown || st.over) return;
+  if (cutShown || st.over || st.cfg.solo) return;
   const me = E.cutOff(st, 0), them = E.cutOff(st, 1);
   if (!me && !them) return;
   cutShown = true;
@@ -4064,7 +4108,7 @@ function checkCutOff() {
 // the turn-10 flood cut the capital off and turns 12-16 were only End turn)
 let strandShown = false;
 function checkStranded() {
-  if (strandShown || st.over || st.cur !== 0 || st.turn >= st.cfg.lastTurn) return;
+  if (strandShown || st.over || st.cfg.solo || st.cur !== 0 || st.turn >= st.cfg.lastTurn) return;
   const stuck = u => !E.moveTargets(st, u).length && !E.attackTargets(st, u).length && (u.type !== "builder" || !!E.wallBlock(st, u));
   if (!st.units.filter(u => u.owner === 0).every(stuck)) return;
   if (st.towns.some(t => t.owner === 0 && E.trainable(st, 0).some(type => !E.trainBlock(st, t, type)))) return;
@@ -4143,7 +4187,7 @@ async function rivalTurn() {
   rivalNote = parts.length ? { turn: st.turn, h: "Rival's turn", t: parts.join("; ").replace(/^./, c => c.toUpperCase()) + "." } : null;
   render();
   await playEvents();
-  if (!st.over) { toast("Your turn", 1000, "turn"); sfx.turn(); saveMatch(); checkCutOff(); checkStranded(); stormNotice(); }
+  if (!st.over) { if (E.turnsToRise(st) === 1) { toast("The sea rises next turn", 1800, "sea"); sfx.capture(); } else toast("Your turn", 1000, "turn"); sfx.turn(); saveMatch(); checkCutOff(); checkStranded(); stormNotice(); }
 }
 
 // ---------- start / end ----------
@@ -4179,6 +4223,14 @@ const starRow = (got, n) => '<div class="stars">' + Array.from({ length: n }, (_
 function showEnd(e) {
   clearMatch();
   if (mode !== "journey") { modeEnd(e); return; }
+  if (island.solo) {
+    coach = null; coachUpdate(); save.tipsSeen.landing = true; writeSave(save);
+    const won = st.winner === 0;
+    showCard(banner(won ? "Island secured" : "The sea won", won ? "" : "lose") + "<h2>" + island.name + "</h2>" +
+      '<p class="small">' + (won ? island.story.win + " Choose your next island: start with Lowmere." : "Walls keep land dry. Try again: wall your house before the sea reaches it.") + "</p>",
+      won ? [["To the chart", () => { showChart(); chartNote("Start with Lowmere, bottom left. A rival lives there."); }]] : [["Try again", () => startIsland("landing")], ["To the chart", showChart, "link"]]);
+    return;
+  }
   const [a, b] = e.scores, won = st.winner === 0, res = starsFor(st, island);
   coach = null; coachUpdate();
   const firstWin = won && !wonIsland(save, island.id);
@@ -4266,7 +4318,11 @@ function showModes() {
 function showChart() {
   $("app").hidden = true; $("chart").hidden = false; setSea(0); setRain(false);
   const animating = renderChart($("chartMap"), save, { onPick: briefing, onInfo: msg => chartNote(msg) });
-  if (!save.tipsSeen.intro) { save.tipsSeen.intro = true; writeSave(save); rulesCard(true); }
+  if (!save.tipsSeen.intro) {
+    save.tipsSeen.intro = true; writeSave(save);
+    showCard(banner("Last Dry Land", "sea") + '<p class="small">The sea is rising. Keep your land dry.</p>',
+      [["Set sail", () => startIsland("landing")], ["Skip to the chart", () => {}, "link"]]);
+  }
   if (animating) { save.lastWon = null; writeSave(save); }
   const m = savedMatch();
   $("resumeBtn").hidden = !m;
@@ -4472,7 +4528,7 @@ function help() {
     (has("farm") ? pic("farm", "Farms", "On crops (low ground). 3 food, +2 food a turn.") : "") +
     (has("quarry") ? pic("quarry", "Quarries", "On rock. 3 food, +2 stone a turn.") : "") +
     (has("tower") ? pic("tower", "Watchtowers", "On high rock. 4 stone. Claims land, shelters a piece.") : "") +
-    (has("storm") ? pic("storm", "Storms", "Clouds show " + ((st.cfg.storm && st.cfg.storm.notice) || E.STORM.notice) + " turns before storms hit. Low land under them floods; walls there hold but lose a level. Any piece under a cloud can Brace its tile for " + E.braceCost(st, 0) + " stone: dry this storm. Break a rival wall under a cloud and the storm floods them.") : "") +
+    (has("storm") ? pic("storm", "Storms", "Clouds show " + ((st.cfg.storm && st.cfg.storm.notice) || E.STORM.notice) + " turns before storms hit. Low land under them floods" + (st.cfg.storm && st.cfg.storm.erosion === 0 ? "; walls there hold." : "; walls there hold but lose a level.") + " Any piece under a cloud can Brace its tile for " + E.braceCost(st, 0) + " stone: dry this storm. Break a rival wall under a cloud and the storm floods them.") : "") +
     (has("trade") ? pic("trade", "Trade", "At any village, once a turn: " + E.tradeRate(st, 0) + " food for 1 stone, or " + E.tradeRate(st, 0) + " stone for 1 food.") : "") +
     (has("tech") ? pic("rank", "Letters", "At your capital, open one letter a turn: Sea (walls, then docks" + (E.allowed(st, "boat") ? " and boats" : "") + "), War (spears" + (E.allowed(st, "archer") ? ", then archers" : "") + "), Land (food, then towns). The second of each needs the first. Each opened makes the next cost " + E.POWER.tech.rise.food + " food and " + E.POWER.tech.rise.stone + " stone more.") : "") +
     (has("town") ? pic("town", "Towns", "Grow a village: " + E.growCost(st, 0).food + " food, " + E.growCost(st, 0).stone + " stone. Border reaches 2 tiles.") : "") +
