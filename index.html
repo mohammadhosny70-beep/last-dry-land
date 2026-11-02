@@ -378,6 +378,20 @@ html{font-synthesis:none}
 #lettersBtn.ready::after{content:"";position:absolute;top:-3px;right:-3px;width:13px;height:13px;border-radius:50%;background:#d8352a;border:2px solid #2b1d10}
 @keyframes bottleGlow{50%{box-shadow:0 0 0 2px #ffd34d,0 0 26px 8px rgba(255,211,77,.95)}}
 @media (prefers-reduced-motion:reduce){#lettersBtn.ready{animation:none}}
+/* PC side panel (MO 11-02: "very big and crowded"): the phone round icon buttons, three to a row, in a narrower
+   panel, like the bottom bar of Polytopia on PC; the island note in smaller writing */
+@media (min-width:760px) and (min-aspect-ratio:1/1){
+  #app{grid-template-columns:minmax(0,1fr) 300px}
+  #actions{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:12px 6px;align-content:start}
+  #actions button{height:auto;padding:0;background:none;box-shadow:none;color:var(--cream);display:grid;justify-items:center;align-content:start;gap:3px;font-size:15px;white-space:normal;overflow:visible}
+  #actions button .ai{display:grid;place-items:center;width:52px;height:52px;border-radius:50%;background:var(--cream);color:var(--ink);box-shadow:inset 0 -3px 0 #c4ab7c,0 2px 6px rgba(0,0,0,.45)}
+  #actions button span{font-size:12px;opacity:.85;white-space:normal;line-height:1.1;text-align:center}
+  #actions button .why{color:#ffb4a4}
+  #actions button:disabled{opacity:1}
+  #actions button:disabled .ai{opacity:.45}
+  #sideNote{font-size:17px;padding:10px 12px}
+  #sideNote h3{font-size:21px}
+}
 </style>
 
 <div id="chart" hidden><div id="chartMap"></div><div id="chartBar" class="wood"><span id="chartNote"></span><button id="rulesBtn" type="button">Rules</button><button id="modesBtn" type="button">Ways to play</button><button id="resumeBtn" type="button" hidden>Continue</button></div></div>
@@ -760,6 +774,8 @@ const ISLANDS = [
   },
   {
     id: "gullrock", name: "Gullrock", clan: "the Cliff Wardens", chart: { x: 64, y: 72 }, ready: true,
+    // atmosphere only (MO 11-02): now and then a octopus surfaces in the sea here, with its sound; no effect on play
+    creature: "octopus",
     story: {
       intro: "Two hills joined by one high pass, low valleys on either side. The Cliff Wardens wall everything. Breakers open walls to the sea. We bring two spears.",
       win: "The pass is ours. Next: the drowned steps.",
@@ -826,6 +842,8 @@ const ISLANDS = [
   },
   {
     id: "stormreach", name: "Storm Reach", clan: "the Stormwives", chart: { x: 58, y: 40 }, ready: true,
+    // atmosphere only (MO 11-02): now and then a whale surfaces in the sea here, with its sound; no effect on play
+    creature: "whale",
     story: {
       intro: "A ring of land round a lagoon. Storms roll in off the sea and drown what sits low. Watch the clouds.",
       win: "The storms passed us by. West of here the chart shows islands split by channels.",
@@ -898,6 +916,8 @@ const ISLANDS = [
   },
   {
     id: "crown", name: "The Sunken Crown", clan: "the Crownless", chart: { x: 50, y: 18 }, ready: true,
+    // atmosphere only (MO 11-02): now and then a octopus surfaces in the sea here, with its sound; no effect on play
+    creature: "octopus",
     story: {
       intro: "An old city on a wide plateau, its towers still standing. Walk a piece in and the tower is yours. We hold two villages; the Crownless want them too.",
       win: "The towers fly our flag. From the highest one we can see it: the last dry land.",
@@ -933,6 +953,8 @@ const ISLANDS = [
   },
   {
     id: "lastland", name: "Last Dry Land", clan: "everyone left", chart: { x: 74, y: 10 }, ready: true,
+    // atmosphere only (MO 11-02): now and then a whale surfaces in the sea here, with its sound; no effect on play
+    creature: "whale",
     story: {
       intro: "The peak on Grandmother's chart. Every clan that is left came here. The sea will rise four times.",
       win: "The sea stopped below the peak. This is the last dry land, and we hold it.",
@@ -1553,7 +1575,8 @@ function buildBlock(st, u, type) {
   const k = BUILD[type], i = u.i;
   if (!k || !allowed(st, type, u.owner)) return "Not on this island";
   if (!can(u, "build") || u.acted) return "Done this turn";
-  if (townAt(st, i)) return "Not on a village";
+  // say where it does go (MO 11-02: "Dock: Not on a village" did not say where docks go)
+  if (townAt(st, i)) return "Needs " + k.where + ", not a village";
   if (st.bld[i]) return "Already built here";
   if (!k.on(st.h[i]) || (k.coast && !coastal(st, i))) return "Needs " + k.where;
   if (territory(st)[i] !== u.owner) return "Not your land";
@@ -2519,6 +2542,17 @@ function horn(freq, dur, vol, when = 0) {
   }
   f.connect(g); g.connect(master);
 }
+// a big octopus coming up: a deep gurgle and bubbles rising to the surface, then a slow wash as it sinks
+function bubbles(vol, when = 0) {
+  if (!ac || muted) return;
+  const t0 = ac.currentTime + when;
+  for (let k = 0; k < 14; k++) {
+    const t = t0 + k * .09 + Math.random() * .08, o = ac.createOscillator(), g = ac.createGain(), f = 180 + Math.random() * 260;
+    o.type = "sine"; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 2.4, t + .07);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol * (1 - k / 18), t + .01); g.gain.exponentialRampToValueAtTime(.001, t + .09);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + .1);
+  }
+}
 // a skin drum: a sine that drops in pitch
 function drum(vol, when = 0, from = 140) {
   if (!ac || muted) return;
@@ -2619,8 +2653,9 @@ const sfx = {
   win: () => { horn(98, 1.4, .17); horn(147, 1.6, .13, .5); },
   lose: () => { horn(110, 1.2, .16); horn(82, 1.8, .16, .6); },
   // storms: far-off thunder when the clouds come in, a crack overhead and the water when one hits
-  // the sea rises next turn: a humpback calls from the deep (recorded, MO 11-02 picked it; v1-2 synth sounded like a ghost)
-  riseSoon: () => clip("whale", 1, 1),
+  // sea creatures (atmosphere, MO 11-02): a humpback calling far out (recorded), a big octopus surfacing
+  whale: () => clip("whale", 1, 1),
+  octopus: () => { drum(.5, 0, 60); bubbles(.22, .05); wash(2.6, .35); drum(.3, 1.8, 55); },
   stormWarn: () => thunder(.35, .1),
   stormHit: () => { thunder(.75, 0, .5); wash(2.4, .6); drum(.45, .1, 70); },
 };
@@ -3311,6 +3346,8 @@ function draw() {
   const su = sel && sel.unit ? E.unitById(st, sel.unit) : null;
   const mine = su && su.owner === 0 && st.cur === 0 && !busy;
   const moveT = new Set(mine ? E.moveTargets(st, su) : []);
+  // shores a piece on its dock can sail to get blue rings, not white (MO 11-02: docks were not clear)
+  const sailT = new Set(mine && !su.moved && !su.acted ? E.sailTargets(st, su) : []);
   const hitT = new Set(mine ? [...E.attackTargets(st, su).map(t => t.i), ...E.sapTargets(st, su)] : []);
   // with a builder picked, flag the nearby tiles where it could found a village
   const siteT = new Set();
@@ -3390,7 +3427,7 @@ function draw() {
       if (moveT.has(i)) {
         const take = E.townAt(st, i) && E.townAt(st, i).owner === 1;
         ctx.beginPath(); ctx.ellipse(x, ty, s * .34, s * .34 * geo.tilt, 0, 0, Math.PI * 2);
-        ctx.lineWidth = Math.max(2, s * .09); ctx.strokeStyle = take ? "#ff8a6a" : "rgba(255,255,255,.95)"; ctx.stroke();
+        ctx.lineWidth = Math.max(2, s * .09); ctx.strokeStyle = take ? "#ff8a6a" : sailT.has(i) ? "#7fd6f2" : "rgba(255,255,255,.95)"; ctx.stroke();
         ell(x, ty, s * .1, s * .1 * geo.tilt, take ? "#ff8a6a" : "rgba(255,255,255,.95)");
       }
       if (hitT.has(i)) ring(x, ty, aim === i ? "#ff3b30" : "rgba(255,80,70,.9)", aim === i ? 3.5 : 2);
@@ -3403,12 +3440,13 @@ function draw() {
       else if (u) pawn(x, ty + s * .15 * geo.tilt, u, u.owner === 0 && E.isDone(u) && st.cur === 0);
       // a gold dot on your capital while a letter is waiting (after the chain above: inside it, it drew a
       // piece in a village twice, MO 10-30)
-      if (t && t.owner === 0 && t.capital && st.cur === 0 && !busy && letterReady()) { ell(x + s * .34, ty - s * .62, s * .1, s * .1, "#2b1d10"); ell(x + s * .34, ty - s * .62, s * .075, s * .075, "#ffd34d"); }
+      if (t && t.owner === 0 && t.capital && st.cur === 0 && !busy && letterNew()) { ell(x + s * .34, ty - s * .62, s * .1, s * .1, "#2b1d10"); ell(x + s * .34, ty - s * .62, s * .075, s * .075, "#ffd34d"); }
       if (st.storm && (st.storm.braced || []).includes(i)) sandbags(x, ty);
       wallEdges(i, x, y, [0, 1, 2]);
     }
   }
   drawStorm();
+  drawBeast();
   drawTags();
   drawPops();
 }
@@ -3440,6 +3478,96 @@ function popTick(now) {
   pops = pops.filter(p => now - p.t0 < 1700);
   draw();
   popRaf = pops.length ? requestAnimationFrame(popTick) : 0;
+}
+// ---------- sea creatures (atmosphere only, MO 11-02): on islands with a creature (levels.js creature), now and then
+// one surfaces in open sea at the start of your turn, with its sound, then dives. No effect on play; UI randomness only.
+let beast = null, beastRaf = 0, beastTurn = -99, beastFor = null;
+const BEAST_MS = { whale: 5600, octopus: 4800 };
+const ease = (a, b, k) => { const q = Math.max(0, Math.min(1, (k - a) / (b - a))); return q * q * (3 - 2 * q); };
+function beastSpot() {
+  const { W, H } = geo, open = [], any = [];
+  for (let i = 0; i < st.b.N; i++) {
+    if (!wet(i) || st.h[i] > 0) continue;
+    const [x, y] = center(i), sx = view.x + x * view.z, sy = view.y + y * view.z;
+    if (sx < 60 || sx > W - 60 || sy < H * .2 || sy > H * .7) continue;
+    any.push(i); if (st.b.nbrs(i).length === 6 && st.b.nbrs(i).every(n => wet(n))) open.push(i);
+  }
+  const pool = open.length ? open : any;
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : -1;
+}
+function maybeBeast(force) {
+  const kind = force || (island && island.creature);
+  if (!kind || !st || st.over || beast || $("app").hidden) return;
+  if (beastFor !== st) { beastFor = st; beastTurn = -99; }
+  if (!force && (st.turn < 3 || st.turn - beastTurn < 5 || Math.random() > .35)) return;
+  const i = beastSpot(); if (i < 0) return;
+  beast = { kind, i, t0: performance.now() }; beastTurn = st.turn;
+  setTimeout(() => sfx[kind](), kind === "whale" ? 500 : 150);
+  if (!beastRaf) beastRaf = requestAnimationFrame(beastTick);
+}
+function beastTick(now) {
+  if (beast && now - beast.t0 > BEAST_MS[beast.kind]) beast = null;
+  draw();
+  beastRaf = beast ? requestAnimationFrame(beastTick) : 0;
+}
+function drawBeast() {
+  if (!beast) return;
+  const now = performance.now(), k = Math.min(1, (now - beast.t0) / BEAST_MS[beast.kind]);
+  const [x, y0] = center(beast.i), s = geo.s, t = geo.tilt;
+  const WL = waterLevel !== null ? waterLevel : st.sea + 0.55, y = y0 - WL * geo.ext;
+  ctx.save();
+  // rings spreading on the water
+  for (let r = 0; r < 3; r++) {
+    const q = (k * 2.4 + r / 3) % 1, rr = s * (.4 + q * 1.5);
+    ctx.globalAlpha = (1 - q) * .6 * (1 - ease(.85, 1, k));
+    ctx.beginPath(); ctx.ellipse(x, y, rr, rr * t, 0, 0, Math.PI * 2); ctx.lineWidth = Math.max(1, s * .05); ctx.strokeStyle = "#e4f4f8"; ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // only what is above the water shows
+  ctx.beginPath(); ctx.rect(x - s * 4, y - s * 5, s * 8, s * 5 + s * .04); ctx.clip();
+  if (beast.kind === "whale") {
+    const up = ease(0, .22, k) * (1 - ease(.5, .72, k)), roll = ease(.5, .75, k), bx = x - s * .3 + roll * s * .7;
+    const by = y + s * .5 - up * s * .85;
+    ctx.beginPath(); ctx.ellipse(bx, by, s * 1.25, s * .55, 0, Math.PI, 0); ctx.fillStyle = "#2c3a45"; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(bx - s * .1, by - s * .08, s * 1.05, s * .38, 0, Math.PI * 1.08, Math.PI * 1.75); ctx.lineWidth = Math.max(1, s * .07); ctx.strokeStyle = "#566b78"; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bx + s * .45, by - s * .5); ctx.quadraticCurveTo(bx + s * .62, by - s * .78, bx + s * .78, by - s * .44); ctx.fillStyle = "#2c3a45"; ctx.fill();
+    // the blow: spray from the blowhole
+    const blow = ease(.22, .3, k) * (1 - ease(.42, .55, k));
+    if (blow > 0) for (let n = 0; n < 18; n++) {
+      const a = -Math.PI / 2 + (n / 17 - .5) * .9, d = s * (.5 + (n * 37 % 10) / 10 * 1.3) * blow;
+      ctx.globalAlpha = .75 * blow; ell(bx - s * .7 + Math.cos(a) * d * .5, by - s * .5 + Math.sin(a) * d, s * .07, s * .07, "#f2fbff");
+    }
+    ctx.globalAlpha = 1;
+    // the tail comes up as it dives
+    const f = Math.sin(Math.PI * ease(.7, 1, k)), fx = x + s * .9, fy = y + s * .1 - f * s * 1.25;
+    if (f > .01) {
+      ctx.fillStyle = "#2c3a45"; ctx.fillRect(fx - s * .1, fy, s * .2, y - fy + s * .1);
+      ctx.beginPath(); ctx.moveTo(fx, fy + s * .05); ctx.bezierCurveTo(fx - s * .35, fy - s * .05, fx - s * .65, fy - s * .1, fx - s * .78, fy - s * .32);
+      ctx.bezierCurveTo(fx - s * .5, fy - s * .18, fx - s * .2, fy - s * .2, fx, fy - s * .08);
+      ctx.bezierCurveTo(fx + s * .2, fy - s * .2, fx + s * .5, fy - s * .18, fx + s * .78, fy - s * .32);
+      ctx.bezierCurveTo(fx + s * .65, fy - s * .1, fx + s * .35, fy - s * .05, fx, fy + s * .05); ctx.fill();
+    }
+  } else {
+    const up = ease(0, .3, k) * (1 - ease(.75, 1, k)), tm = (now - beast.t0) / 1000;
+    // head
+    const hy = y + s * .2 - up * s * .55;
+    ctx.beginPath(); ctx.ellipse(x, hy, s * .62, s * .55, 0, Math.PI, 0); ctx.fillStyle = "#6b2638"; ctx.fill();
+    if (up > .55) for (const ex of [-.24, .24]) { ell(x + ex * s, hy - s * .18, s * .1, s * .08, "#f0c75a"); ctx.fillStyle = "#1b0d10"; ctx.fillRect(x + ex * s - s * .015, hy - s * .25, s * .03, s * .14); }
+    // arms: thick tapered curls with suckers, swaying
+    for (const [j, dx] of [[0, -1.25], [1, -.75], [2, .8], [3, 1.3]]) {
+      const dir = dx < 0 ? -1 : 1, sway = Math.sin(tm * 2.2 + j * 1.7), hh = s * (1.25 + (j % 2) * .45) * up;
+      if (hh < s * .05) continue;
+      const P = [[x + dx * s, y + s * .05], [x + dx * s + sway * s * .45, y - hh * .7], [x + dx * s + dir * s * .55 + sway * s * .25, y - hh]];
+      const pt = u => [(1 - u) * (1 - u) * P[0][0] + 2 * u * (1 - u) * P[1][0] + u * u * P[2][0], (1 - u) * (1 - u) * P[0][1] + 2 * u * (1 - u) * P[1][1] + u * u * P[2][1]];
+      ctx.lineCap = "round"; ctx.strokeStyle = "#6b2638";
+      for (let n = 0; n < 14; n++) { const a = pt(n / 14), b = pt((n + 1) / 14); ctx.lineWidth = s * (.3 - n * .018); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); }
+      // the tip curls over
+      const tip = pt(1); ctx.lineWidth = s * .05; ctx.beginPath(); ctx.arc(tip[0] - dir * s * .1, tip[1] + s * .02, s * .1, dir > 0 ? Math.PI : 0, dir > 0 ? Math.PI * 2.4 : -Math.PI * 1.4, dir < 0); ctx.stroke();
+      for (let n = 2; n < 12; n += 2) { const a = pt(n / 14); ell(a[0] - dir * s * .06, a[1], s * .045, s * .045, "#e7b3a2"); }
+      ctx.lineCap = "butt";
+    }
+  }
+  ctx.restore();
 }
 // ---------- tags: short notes drawn on the board over the tile they are about ----------
 let tags = [];
@@ -3508,7 +3636,7 @@ function lettersBtn() {
   b.hidden = !E.allowed(st, "tech");
   if (b.hidden) return;
   if (!b.firstChild) b.innerHTML = ACT_IC.letters;
-  const ready = letterReady() && st.cur === 0 && !busy;
+  const ready = letterNew() && st.cur === 0 && !busy;
   b.classList.toggle("ready", ready);
   b.setAttribute("aria-label", ready ? "Letters: one is ready to open" : "Letters");
 }
@@ -3664,6 +3792,10 @@ function panel() {
       }
       // what this kind of piece does, once (tester 11-01: never told what a Shield does)
       if (su.type !== "builder" && su.type !== "spear" && WHAT[su.type]) tip("piece_" + su.type, NAMES[su.type], WHAT[su.type]);
+      // docks (MO 11-02: "I build docks, how does it work, not clear"): say how to sail, once each
+      const onDock = st.bld[su.i] && st.bld[su.i].type === "dock";
+      if (onDock && !su.moved && E.sailTargets(st, su).length) tip("sail", "Sailing", "Blue rings: this piece can sail to any shore up to " + E.SAIL + " tiles away. Tap one to sail there.");
+      else if (!onDock && st.bld.some(b => b && b.type === "dock" && b.owner === 0)) tip("dock", "Docks", "Move a piece onto your dock. Next turn pick it again: blue rings show every shore it can sail to, up to " + E.SAIL + " tiles away.");
       // a piece on your own village blocks training there (tester 11-01: the train buttons were never found)
       const homeT = E.townAt(st, su.i);
       if (homeT && homeT.owner === 0 && E.trainable(st, 0).length) tip("trainEmpty", "Training", "A village trains pieces only when it is empty. Move this piece off, then tap the village.");
@@ -3748,7 +3880,7 @@ function panel() {
     // always two lines: the name, then its cost (or why it can't be done)
     b.innerHTML = '<i class="ai">' + (ACT_IC[ACT_OF[label]] || "") + "</i><b>" + label + "</b>" + (blocked ? '<span class="why">' + blocked + "</span>" : cost ? "<span>" + costIcons(cost) + "</span>" : "");
     if (blocked) b.disabled = true;
-    if (label === "Letters" && letterReady()) b.classList.add("ready");
+    if (label === "Letters" && letterNew()) b.classList.add("ready");
     b.addEventListener("click", fn);
     acts.appendChild(b);
   }
@@ -3883,6 +4015,11 @@ const allDone = () => st && st.cur === 0 && !busy && !st.over && !st.units.some(
 let quietTurn = -1;
 // a letter can be opened this turn (any bottle the rules allow)
 const letterReady = () => E.allowed(st, "tech") && !st.learned && Object.keys(E.TECHS).some(id => !E.learnBlock(st, 0, id));
+// glow and nudge only when a letter newly becomes affordable since you last looked at the Letters (MO 11-02: the
+// bottle glowed every turn and nagged); opening the Letters card counts as looking
+let lettersSeen = new Set(), lettersFor = null;
+const affordable = () => Object.keys(E.TECHS).filter(id => !E.learnBlock(st, 0, id));
+const letterNew = () => { if (lettersFor !== st) { lettersFor = st; lettersSeen = new Set(); } return letterReady() && affordable().some(id => !lettersSeen.has(id)); };
 function situation() {
   if (!st || st.over || st.cur !== 0 || busy || quietTurn === st.turn) return null;
   // your capital drowns at the next rise: warn a turn ahead, so a builder trained now can still wall it (tester v6:
@@ -3909,7 +4046,7 @@ function situation() {
     if (st.hold[0] > 0) return { h: "You hold the peak", t: st.hold[0] + " of " + E.WIN.peakTurns + " turns. Keep a piece on it." };
   }
   if (st.peak && st.peak.length && st.turn >= st.cfg.peakFrom - 2 && st.turn < st.cfg.peakFrom) return { h: "The peak", t: "From turn " + st.cfg.peakFrom + ", holding the gold tiles " + E.WIN.peakTurns + " turns in a row wins." };
-  if (letterReady() && !(sel && sel.town === st.capitals[0])) return { h: "A letter is ready", t: "Tap the glowing bottle at the top right to open it." };
+  if (letterNew() && !(sel && sel.town === st.capitals[0])) return { h: "A letter is ready", t: "Tap the glowing bottle at the top right to open it." };
   if (allDone()) return { h: "All done", t: "Press End turn." };
   return null;
 }
@@ -4234,7 +4371,7 @@ async function rivalTurn() {
   rivalNote = parts.length ? { turn: st.turn, h: "Rival's turn", t: parts.join("; ").replace(/^./, c => c.toUpperCase()) + "." } : null;
   render();
   await playEvents();
-  if (!st.over) { if (E.turnsToRise(st) === 1) { toast("The sea rises next turn", 1800, "sea"); sfx.riseSoon(); } else toast("Your turn", 1000, "turn"); sfx.turn(); saveMatch(); checkCutOff(); checkStranded(); stormNotice(); }
+  if (!st.over) { if (E.turnsToRise(st) === 1) { toast("The sea rises next turn", 1800, "sea"); sfx.capture(); } else toast("Your turn", 1000, "turn"); sfx.turn(); saveMatch(); checkCutOff(); checkStranded(); stormNotice(); setTimeout(maybeBeast, 1400); }
 }
 
 // ---------- start / end ----------
@@ -4516,6 +4653,7 @@ function letterState(id) {
   return { state: "closed", tag: "Not yet: " + short };
 }
 function techCard() {
+  letterNew(); for (const id of affordable()) lettersSeen.add(id);
   const branches = Object.keys(E.BRANCHES);
   let svg = '<svg class="shore" viewBox="0 0 300 ' + (125 + branches.length * 125) + '" role="img" aria-label="Letters from the sea">';
   svg += '<rect width="300" height="' + (125 + branches.length * 125) + '" rx="6" fill="#e3cf9f"/>';
@@ -4584,7 +4722,7 @@ function help() {
     pic("rank", "Ranks", "2 kills: Veteran. 4: Champion, moves 2. Or Drill a spear in a village: " + E.DRILL_COST[1].food + " food + " + E.DRILL_COST[1].stone + " stone, then " + E.DRILL_COST[2].food + " + " + E.DRILL_COST[2].stone + ". Rest: " + E.REST_COST + " food, +" + E.REST_HEAL + " health, +" + E.HOME_HEAL + " at home.") +
     (island.perk ? pic("win", island.clan.replace(/^the /, "The ") + ": " + island.perk.name, island.perk.text) : "") +
     (E.allowed(st, "shield") ? pic("shield", "Shields", E.UNIT.shield.food + " food, " + E.UNIT.shield.stone + " stone. It and your pieces next to it take " + E.SHIELD_GUARD + " less from each hit.") : "") +
-    ((st.cfg.given || []).includes("dock") ? pic("boat", "Docks", "From a dock, move a piece to any shore up to " + E.SAIL + " tiles away. Builders build docks on the shore.") : "") +
+    (E.allowed(st, "dock") ? pic("boat", "Docks", "A builder builds a dock on the shore. A piece standing on your dock can sail, as its move, to any shore up to " + E.SAIL + " tiles away (blue rings).") : "") +
     (E.allowed(st, "boat") ? pic("boat", "Boats", (E.knows(st, 0, "docks") && !st.techs[0].includes("docks") ? "" : "Open the Docks letter. ") + "A village on the shore, or near your dock, trains one: it moves 2 on water, hits pieces on the shore, and the sea can't drown it. Next to a rival dock it blocks all sailing from that dock. It can't take villages.") : "") +
     (st.ground && st.ground.includes("forest") ? pic("forest", E.GROUND.forest.name, E.GROUND.forest.tip) : "") +
     (st.ground && st.ground.includes("marsh") ? pic("marsh", E.GROUND.marsh.name, E.GROUND.marsh.tip) : "") +
@@ -4625,7 +4763,7 @@ window.addEventListener("resize", () => { if (st && !$("app").hidden) { layout()
 showChart();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (st && !$("app").hidden) { layout(); render(); } else showChart(); });
 // test hook for tools/drive scripts (headless screenshots)
-window.__ldl = { sit: () => situation(), nums: id => letterNumbers(id), mark: () => rivalMark, note: () => rivalNote, geo: () => ({ ...geo, view: { ...view } }), showModes, startMode, resumeMatch, briefing, help, state: () => st, tap: onTile, busy: () => busy, startIsland, showChart, save: () => save };
+window.__ldl = { beast: k => maybeBeast(k || "whale"), sit: () => situation(), nums: id => letterNumbers(id), mark: () => rivalMark, note: () => rivalNote, geo: () => ({ ...geo, view: { ...view } }), showModes, startMode, resumeMatch, briefing, help, state: () => st, tap: onTile, busy: () => busy, startIsland, showChart, save: () => save };
 
 return {  };
 })();
