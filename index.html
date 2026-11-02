@@ -391,6 +391,9 @@ html{font-synthesis:none}
   #actions button:disabled .ai{opacity:.45}
   #sideNote{font-size:17px;padding:10px 12px}
   #sideNote h3{font-size:21px}
+  /* the hint line goes under the buttons, so a long warning never moves them (tester 11-02: Wall tap missed) */
+  #info{order:1} #actions{order:2} #hint{order:3;min-height:0} #sideNote{order:4} .bottom{order:5}
+  #hint[hidden]{display:none!important}
 }
 </style>
 
@@ -791,15 +794,16 @@ const ISLANDS = [
       ".011343110.",
     ] },
     // a war island: two spears from the start
-    start: { capital: [12, 5], units: [["spear", 11, 5], ["spear", 11, 6], ["builder", 12, 6]] },
+    // the builder starts on open ground: at [12, 6] it was boxed in by the capital, the sea and its own spears (tester 11-02)
+    start: { capital: [12, 5], units: [["spear", 11, 5], ["spear", 11, 6], ["builder", 12, 4]] },
     perk: { name: "Hardy", text: "Their spears have 2 more health.", fx: [{ key: "spear.hp", add: 2 }] },
     // high ground: the sea is slow here, the match long
     rises: [7, 14, 20], lastTurn: 22,
-    res: { food: 10, stone: 5 },
+    res: { food: 11, stone: 4 },
     unlocks: [...BASIC, "tech", "farm", "quarry", "town", "trade", "sapper", "archer"],
-    rival: { attack: 1.1, expand: 0.7, walls: 1.4 },
+    rival: { attack: 1.1, expand: 0.8, walls: 1.3 },
     // rival habits on one level, found by tools/tune.mjs
-    rivalBrain: { normal: { walls: 1.25 }, hard: { attack: 1.9, threat: 1 } },
+    rivalBrain: { hard: { attack: 1, threat: 2, walls: 0.75 } },
     goals: [{ type: "takeCapital" }, { type: "keepCapital" }],
     coach: "breaker",
     look: { bg: "#0d151c", deep: "#1d3d56", shallow: "#3c6c88", drowned: "#2f5a76", waterSide: "#16304a", waterSide2: "#1c3a54", side1: "#35353c", side2: "#4c4c55",
@@ -956,7 +960,7 @@ const ISLANDS = [
     // atmosphere only (MO 11-02): now and then a whale surfaces in the sea here, with its sound; no effect on play
     creature: "whale",
     story: {
-      intro: "The peak on Grandmother's chart. Every clan that is left came here. The sea will rise four times.",
+      intro: "The peak on Grandmother's chart. Every clan that is left came here. The sea climbs higher here than anywhere.",
       win: "The sea stopped below the peak. This is the last dry land, and we hold it.",
     },
     // the biggest island: rings climbing to a summit ridge; the sea rises four times, to level 4, and the ridge
@@ -1007,13 +1011,20 @@ const nextIsland = id => ISLANDS[ISLANDS.findIndex(l => l.id === id) + 1] || nul
 const DIFFICULTY = {
   // 11-01 (tester lost all 3 Easy games): Easy is for beginners. Measured with the "novice" stand-in (the bot with a
   // third of its moves gone astray): was 48-90% wins by island, now 83-100%
-  easy: { label: "Easy", hint: "For your first games: plenty of food and stone, sturdier villages, and a rival that walls late and attacks less.", youStart: { food: 8, stone: 4 }, youIncome: { food: 2, stone: 2 }, rivalStart: { food: 0, stone: 0 }, rivalIncome: { food: 0, stone: 0 }, rivalLoose: true, rivalBrain: { attack: 0.3 },
+  easy: { label: "Easy", hint: "For your first games: plenty of food and stone, sturdier villages, and a rival that starts no fights before turn 10, then fights only every other turn. The sea stops one level lower.", youStart: { food: 8, stone: 4 }, youIncome: { food: 2, stone: 2 }, rivalStart: { food: 0, stone: 0 }, rivalIncome: { food: 0, stone: 0 }, rivalLoose: true, rivalBrain: { attack: 0.3 },
     // 11-01 v6 (tester: a village defender lost 7 a rival turn and healed 4, so the village fell 3 times): your pieces in
     // your own villages take 2 less from each hit and heal 2 more
     youFx: [{ key: "guard", add: 2 }, { key: "heal.home", add: 2 }],
     // 11-01 (tester: three storms after turn 12 sank an 18-point lead on Last Dry Land): lighter storms on Easy, one
     // cloud a wave, 3 turns' warning, walls don't wear. Beginner keeps more land: Crown 45 -> 55, Storm Reach 28 -> 34
-    storm: { fronts: 1, big: 1, notice: 3, erosion: 0 } },
+    storm: { fronts: 1, big: 1, notice: 3, erosion: 0 },
+    // 11-02 (MO OK; tester, 13 games: the Easy rival killed a piece nearly every turn and every lead was lost; the bench
+    // novice did not show it): the rival starts no fight before turn 10, then at most one attack every other turn.
+    // It still hits back when attacked
+    rivalHolds: { from: 10, every: 2 },
+    // 11-02 (MO OK; tester lost all four Easy islands the same way: level or ahead to about turn 15, then the late rises
+    // drowned 2-5 pieces and villages at once): the sea stops one level lower on Easy, the last rise does not come
+    calmerSea: true },
   // 10-30 (MO: Hard on The Sunken Crown was easy): Normal gets what was Hard; Hard thinks two rises ahead
   // and presses its attacks. No extra food or stone for the rival on any level (MO: no bonus)
   normal: { label: "Normal", hint: "An even fight: the rival walls early, finishes off hurt pieces, guards its villages.", youStart: { food: 0, stone: 0 }, youIncome: { food: 0, stone: 0 }, rivalStart: { food: 0, stone: 0 }, rivalIncome: { food: 0, stone: 0 }, rivalSmart: true, rivalLook: 1, rivalLookWeight: 2 },
@@ -1130,7 +1141,7 @@ function cloneState(st) {
   const c = {
     ...st, water: st.water.slice(), wall: st.wall.slice(), bld: st.bld.map(b => (b ? { ...b } : null)),
     units: st.units.map(u => ({ ...u })), towns: st.towns.map(t => ({ ...t })), players: st.players.map(p => ({ ...p })),
-    capitals: st.capitals.slice(), peak: (st.peak || []).slice(), hold: (st.hold || [0, 0]).slice(), fx: (st.fx || [[], []]).map(a => a.slice()), techs: (st.techs || [[], []]).map(a => a.slice()), trained: { ...st.trained }, traded: { ...(st.traded || {}) }, events: [],
+    capitals: st.capitals.slice(), lastHit: (st.lastHit || [-99, -99]).slice(), peak: (st.peak || []).slice(), hold: (st.hold || [0, 0]).slice(), fx: (st.fx || [[], []]).map(a => a.slice()), techs: (st.techs || [[], []]).map(a => a.slice()), trained: { ...st.trained }, traded: { ...(st.traded || {}) }, events: [],
     storm: st.storm ? { ...st.storm, ats: st.storm.ats.slice(), braced: (st.storm.braced || []).slice(), bracedBy: (st.storm.bracedBy || [0, 0]).slice() } : null,
   };
   c.rng = rngOf(c);
@@ -1156,7 +1167,7 @@ function newGame(island, difficulty = "normal", seed = Math.floor(Math.random() 
     b, h: m.h, water: m.h.map(v => v <= 0), wall: m.h.map(() => 0), bld: m.h.map(() => null),
     sea: 0, turn: 1, cur: 0,
     cfg: {
-      island: island.id, difficulty, rises: island.rises.slice(), lastTurn: island.lastTurn, unlocks: island.unlocks.slice(),
+      island: island.id, difficulty, rises: island.rises.slice(0, island.rises.length - (dif.calmerSea && island.rises.length > 1 ? 1 : 0)), lastTurn: island.lastTurn, unlocks: island.unlocks.slice(),
       // open from the start here, without the letter that opens them elsewhere
       given: (island.given || []).slice(),
       // Endless (modes.js): the match only ends when you lose your last village
@@ -1181,13 +1192,16 @@ function newGame(island, difficulty = "normal", seed = Math.floor(Math.random() 
       reply: [0, dif.rivalReply || 0],
       // extra habits of the rival's play (ai.js BRAIN): the level's, then the island's own for that level
       brain: [{}, { ...(dif.rivalBrain || {}), ...((island.rivalBrain && island.rivalBrain[difficulty]) || {}) }],
+      // a side that holds back (levels.js DIFFICULTY rivalHolds, Easy): starts no fight before turn `from`, then attacks
+      // at most once every `every` turns. Hitting back is never held
+      holds: [null, dif.rivalHolds || null],
     },
     players: [
       { food: island.res.food + dif.youStart.food, stone: island.res.stone + dif.youStart.stone },
       { food: island.res.food + dif.rivalStart.food, stone: island.res.stone + dif.rivalStart.stone },
     ],
     // a level can give you effects from the start (levels.js DIFFICULTY youFx: Easy's sturdier villages)
-    units: [], towns: [], capitals: [-1, -1], nextId: 1, trained: {}, fx: [(dif.youFx || []).map(f => ({ ...f })), []], techs: [[], []], learned: false, over: false, winner: -1, events: [],
+    units: [], towns: [], capitals: [-1, -1], lastHit: [-99, -99], nextId: 1, trained: {}, fx: [(dif.youFx || []).map(f => ({ ...f })), []], techs: [[], []], learned: false, over: false, winner: -1, events: [],
     seed, rs: seed >>> 0,
   };
   st.rng = rngOf(st);
@@ -1436,9 +1450,11 @@ function sailTargets(st, u) {
   if (blockaded(st, u.i, u.owner)) return [];
   // from your own dock or an old one nobody holds yet (a rival dock must be taken first)
   if (!allowed(st, "dock", u.owner) || !b || b.type !== "dock" || (b.owner !== u.owner && b.owner !== -1)) return [];
+  // never onto land the sea takes at the end of this turn (tester 11-02: a veteran sailed onto it and drowned)
+  const drowns = turnsToRise(st) === 0 ? floodSet(st, st.sea + 1) : new Set();
   const out = [];
   for (let n = 0; n < st.b.N; n++) {
-    if (n === u.i || !coastal(st, n) || unitAt(st, n) || st.b.dist(u.i, n) > SAIL) continue;
+    if (n === u.i || !coastal(st, n) || unitAt(st, n) || st.b.dist(u.i, n) > SAIL || drowns.has(n)) continue;
     const t = townAt(st, n);
     if (!t || t.owner === u.owner || can(u, "take")) out.push(n);
   }
@@ -1483,8 +1499,15 @@ function moveTargets(st, u) {
   for (const n of sailTargets(st, u)) out.add(n);
   return [...out];
 }
+// may side p start a fight this turn? (cfg.holds: Easy rival, MO 11-02 from 13 tester games)
+function mayAttack(st, p) {
+  const h = st.cfg.holds && st.cfg.holds[p];
+  if (!h) return true;
+  const last = (st.lastHit || [-99, -99])[p];
+  return st.turn >= h.from && st.turn - last >= h.every;
+}
 function attackTargets(st, u) {
-  if (u.acted || atkOf(u, st) === 0) return [];
+  if (u.acted || atkOf(u, st) === 0 || !mayAttack(st, u.owner)) return [];
   const reach = can(u, "range") ? 2 : 1;
   return st.units.filter(t => t.owner !== u.owner && st.b.dist(u.i, t.i) >= 1 && st.b.dist(u.i, t.i) <= reach);
 }
@@ -1576,8 +1599,9 @@ function buildBlock(st, u, type) {
   if (!k || !allowed(st, type, u.owner)) return "Not on this island";
   if (!can(u, "build") || u.acted) return "Done this turn";
   // say where it does go (MO 11-02: "Dock: Not on a village" did not say where docks go)
-  if (townAt(st, i)) return "Needs " + k.where + ", not a village";
-  if (st.bld[i]) return "Already built here";
+  // a dock may stand on your own village on the shore (MO 11-02: a capital cut off by the sea had no way out)
+  if (townAt(st, i) && !(type === "dock" && townAt(st, i).owner === u.owner)) return "Needs " + k.where + ", not a village";
+  if (st.bld[i]) return "A " + BUILD[st.bld[i].type].name.toLowerCase() + " is here";
   if (!k.on(st.h[i]) || (k.coast && !coastal(st, i))) return "Needs " + k.where;
   if (territory(st)[i] !== u.owner) return "Not your land";
   const p = st.players[u.owner], c = buildCost(st, u.owner, type);
@@ -1639,6 +1663,8 @@ function win(st, p, reason) {
 }
 // a captured town: if it was the rival's capital, the taker wins (not in Endless)
 function captured(st, town, by, from) {
+  // a dock on the village goes with it
+  if (st.bld[town.i]) st.bld[town.i].owner = by;
   if (town.capital && from >= 0 && !st.cfg.endless && st.capitals[from] === town.i) win(st, by, "capital");
 }
 
@@ -1747,6 +1773,8 @@ function apply(st, a) {
     if (!t || !attackTargets(st, u).includes(t)) return false;
     const f = fight(st, u, t);
     t.hp -= f.dmg; u.moved = u.acted = true; u.rested = false;
+    if (!st.lastHit) st.lastHit = [-99, -99];
+    st.lastHit[u.owner] = st.turn;
     if (t.hp > 0) u.hp -= f.ret;
     st.events.push({ type: "fight", at: t.i, from: u.i, dmg: f.dmg, ret: t.hp > 0 ? f.ret : 0 });
     if (t.hp <= 0) {
@@ -1884,7 +1912,7 @@ function checkElimination(st) {
 
 // for the Letters card (letters in numbers)
 
-return { POWER, SAIL, SHIELD_GUARD, WOUND, GROUND, WIN, TECHS, BRANCHES, KEEPSAKES_ON, KEEPSAKES, UNIT, BUILD, RANK_KILLS, RANK_NAMES, MAX_WALL, WALL_COST, GROW_COST, TRADE_RATE, NEAR_VILLAGE_EXTRA, REST_HEAL, HOME_HEAL, REST_COST, VILLAGE_GUARD, DRILL_COST, STORM, starsFor, CAPITAL_GIVES, stat, cloneState, freeze, thaw, newGame, territory, floodSet, applyFlood, stormSet, income, cutOff, contested, score, turnsToRise, sailTargets, moveTargets, attackTargets, fight, braceBlock, wallBlock, foundBlock, growBlock, tradeBlock, restBlock, drillBlock, buildBlock, sapTargets, boatLaunch, trainBlock, holdsPeak, learnBlock, apply, endTurn, can, typeFor, unitCost, buildCost, wallCost, maxWall, growCost, drillCost, restCost, tradeRate, guardOf, unitMove, atkOf, maxHp, hitOf, townCost, nearVillage, foundCost, restHeal, allowed, unitAt, townAt, unitById, isDone, turnsToStorm, inStorm, finalSea, coastal, blockaded, braceCost, buildsFor, trainable, sellValue, techCost, knows, techHere };
+return { POWER, SAIL, SHIELD_GUARD, WOUND, GROUND, WIN, TECHS, BRANCHES, KEEPSAKES_ON, KEEPSAKES, UNIT, BUILD, RANK_KILLS, RANK_NAMES, MAX_WALL, WALL_COST, GROW_COST, TRADE_RATE, NEAR_VILLAGE_EXTRA, REST_HEAL, HOME_HEAL, REST_COST, VILLAGE_GUARD, DRILL_COST, STORM, starsFor, CAPITAL_GIVES, stat, cloneState, freeze, thaw, newGame, territory, floodSet, applyFlood, stormSet, income, cutOff, contested, score, turnsToRise, sailTargets, moveTargets, mayAttack, attackTargets, fight, braceBlock, wallBlock, foundBlock, growBlock, tradeBlock, restBlock, drillBlock, buildBlock, sapTargets, boatLaunch, trainBlock, holdsPeak, learnBlock, apply, endTurn, can, typeFor, unitCost, buildCost, wallCost, maxWall, growCost, drillCost, restCost, tradeRate, guardOf, unitMove, atkOf, maxHp, hitOf, townCost, nearVillage, foundCost, restHeal, allowed, unitAt, townAt, unitById, isDone, turnsToStorm, inStorm, finalSea, coastal, blockaded, braceCost, buildsFor, trainable, sellValue, techCost, knows, techHere };
 })();
 __m.ai = (function () {
 // Last Dry Land - computer rival. Each unit scores what it can do now (hand-set values below); on
@@ -2949,6 +2977,8 @@ function clampView() {
 }
 // start a match close up on your capital, big enough to tap on a phone; pinch out to see the island
 const TAP_SIZE = 34;
+// the sea rises a match of this island will have at this level (levels.js DIFFICULTY calmerSea drops the last)
+const risesText = (l, d) => { const r = l.rises.slice(0, l.rises.length - (DIFFICULTY[d] && DIFFICULTY[d].calmerSea && l.rises.length > 1 ? 1 : 0)); return "Rises " + r.join(" · "); };
 function focusHome() {
   // big enough to tap, and the land at least as tall as the room between the top line and the row
   const cap = st.capitals[0], z = Math.min(MAX_ZOOM, Math.max(TAP_SIZE / geo.s, (geo.H - geo.T - geo.B) / (geo.bb - geo.bt)));
@@ -3354,6 +3384,8 @@ function draw() {
   if (mine && su.type === "builder" && !su.acted && E.allowed(st, "village")) for (let i = 0; i < st.b.N; i++)
     if (st.b.dist(su.i, i) <= 2 && !st.water[i] && own[i] !== 1 && !E.townAt(st, i)) siteT.add(i);
   hits = [];
+  // move rings on tiles with a house or building are drawn last, over the sprites (tester 11-02: a tower hid its ring)
+  const lateRings = [];
   const ct = coachTarget();
   const rnd = mulberry(7);
   for (let r = 0; r < st.b.R; r++) for (let c = 0; c < st.b.C; c++) {
@@ -3424,7 +3456,8 @@ function draw() {
       if (i === ct) { ring(x, ty, "#ffd34d", Math.max(3, s * .16), .8); arrowDown(x, ty - s * 1.25); }
       if (siteT.has(i)) flag(x + s * .3, ty - s * .05 * geo.tilt);
       // a tile the picked piece can walk to: a white ring with a dot (red ring = a rival village it would take)
-      if (moveT.has(i)) {
+      if (moveT.has(i) && (E.townAt(st, i) || st.bld[i])) lateRings.push([x, ty, i]);
+      else if (moveT.has(i)) {
         const take = E.townAt(st, i) && E.townAt(st, i).owner === 1;
         ctx.beginPath(); ctx.ellipse(x, ty, s * .34, s * .34 * geo.tilt, 0, 0, Math.PI * 2);
         ctx.lineWidth = Math.max(2, s * .09); ctx.strokeStyle = take ? "#ff8a6a" : sailT.has(i) ? "#7fd6f2" : "rgba(255,255,255,.95)"; ctx.stroke();
@@ -3433,6 +3466,8 @@ function draw() {
       if (hitT.has(i)) ring(x, ty, aim === i ? "#ff3b30" : "rgba(255,80,70,.9)", aim === i ? 3.5 : 2);
       else if (aim === i) ring(x, ty, "#fff4c2", 3);
       if (rivalMark && (rivalMark.tiles.includes(i) || rivalMark.hit === i)) ring(x, ty, rivalMark.hit === i ? "#ff3b30" : "#ff9a8a", Math.max(3, s * .13), .8);
+      // a dock on a shore village: drawn at the tile's front edge, behind the house
+      if (t && b) buildingPiece(b, x + s * .36, ty + s * .32 * geo.tilt, true);
       if (t && u) { house(x - s * .2, ty - s * .12 * geo.tilt, COL[t.owner], t.capital, t.grown); pawn(x + s * .22, ty + s * .22 * geo.tilt, u, u.owner === 0 && E.isDone(u) && st.cur === 0); }
       else if (t) house(x, ty + s * .12 * geo.tilt, COL[t.owner], t.capital, t.grown);
       else if (b && u) { buildingPiece(b, x - s * .22, ty - s * .08 * geo.tilt, own[i] === b.owner); pawn(x + s * .24, ty + s * .24 * geo.tilt, u, u.owner === 0 && E.isDone(u) && st.cur === 0); }
@@ -3444,6 +3479,11 @@ function draw() {
       if (st.storm && (st.storm.braced || []).includes(i)) sandbags(x, ty);
       wallEdges(i, x, y, [0, 1, 2]);
     }
+  }
+  for (const [x, ty, i] of lateRings) {
+    const take = E.townAt(st, i) && E.townAt(st, i).owner === 1, col = take ? "#ff8a6a" : sailT.has(i) ? "#7fd6f2" : "rgba(255,255,255,.95)";
+    ctx.beginPath(); ctx.ellipse(x, ty, s * .34, s * .34 * geo.tilt, 0, 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(2, s * .09); ctx.strokeStyle = col; ctx.stroke(); ell(x, ty, s * .1, s * .1 * geo.tilt, col);
   }
   drawStorm();
   drawBeast();
@@ -3465,8 +3505,11 @@ function drawCloud(at) {
   const cy = gy - s * 2.1;
   ctx.strokeStyle = "rgba(120,170,210,.8)"; ctx.lineWidth = Math.max(1, s * .05);
   for (let k = -3; k <= 3; k++) { ctx.beginPath(); ctx.moveTo(x + k * s * .2, cy + s * .2); ctx.lineTo(x + k * s * .2 - s * .12, cy + s * .75); ctx.stroke(); }
+  // see-through, so a piece under the cloud still shows (tester 11-02: a rival spear hid under one)
+  ctx.globalAlpha = .6;
   for (const [dx, dy, rr] of [[-.45, .05, .42], [0, -.18, .55], [.48, .02, .44], [.1, .14, .5]]) ell(x + dx * s, cy + dy * s, rr * s * 1.1, rr * s * .8, "#4a5566");
   for (const [dx, dy, rr] of [[-.3, -.08, .3], [.15, -.3, .34]]) ell(x + dx * s, cy + dy * s, rr * s, rr * s * .7, "#6b7688");
+  ctx.globalAlpha = 1;
   ctx.restore();
 }
 // floating numbers over the board (damage, wall knocked down)
@@ -3485,23 +3528,31 @@ let beast = null, beastRaf = 0, beastTurn = -99, beastFor = null;
 const BEAST_MS = { whale: 5600, octopus: 4800 };
 const ease = (a, b, k) => { const q = Math.max(0, Math.min(1, (k - a) / (b - a))); return q * q * (3 - 2 * q); };
 function beastSpot() {
-  const { W, H } = geo, open = [], any = [];
+  const { W, H } = geo, open = [], edge = [], bay = [];
   for (let i = 0; i < st.b.N; i++) {
     if (!wet(i) || st.h[i] > 0) continue;
     const [x, y] = center(i), sx = view.x + x * view.z, sy = view.y + y * view.z;
-    if (sx < 60 || sx > W - 60 || sy < H * .2 || sy > H * .7) continue;
-    any.push(i); if (st.b.nbrs(i).length === 6 && st.b.nbrs(i).every(n => wet(n))) open.push(i);
+    // anywhere on screen clear of the top bar and the buttons; open sea mid-screen preferred (Gullrock has none there)
+    if (sx < 40 || sx > W - 40 || sy < H * .14 || sy > H * .78) continue;
+    // its top (about 1.6 tiles up) stays below the top bar and away from the menu and letters buttons (tester 11-02)
+    const top = sy - 1.7 * geo.s * view.z;
+    if (top < geo.T + 8 || (sx > W - 120 && top < geo.T + 140)) continue;
+    // open sea (every neighbour sea) gets a full-size creature; a bay (4+ sea neighbours, no piece beside it) a small
+    // one, so it never covers land or pieces; mid-screen preferred
+    const sea = st.b.nbrs(i).filter(n => wet(n)).length, all = sea === st.b.nbrs(i).length;
+    if (!all && (sea < 4 || st.b.nbrs(i).some(n => E.unitAt(st, n)))) continue;
+    (all ? (sy < H * .2 || sy > H * .7 ? edge : open) : bay).push(i);
   }
-  const pool = open.length ? open : any;
-  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : -1;
+  const pool = open.length ? open : edge.length ? edge : bay, i = pool.length ? pool[Math.floor(Math.random() * pool.length)] : -1;
+  return { i, size: pool === bay ? .6 : 1 };
 }
 function maybeBeast(force) {
   const kind = force || (island && island.creature);
   if (!kind || !st || st.over || beast || $("app").hidden) return;
   if (beastFor !== st) { beastFor = st; beastTurn = -99; }
   if (!force && (st.turn < 3 || st.turn - beastTurn < 5 || Math.random() > .35)) return;
-  const i = beastSpot(); if (i < 0) return;
-  beast = { kind, i, t0: performance.now() }; beastTurn = st.turn;
+  const { i, size } = beastSpot(); if (i < 0) return;
+  beast = { kind, i, size, t0: performance.now() }; beastTurn = st.turn;
   setTimeout(() => sfx[kind](), kind === "whale" ? 500 : 150);
   if (!beastRaf) beastRaf = requestAnimationFrame(beastTick);
 }
@@ -3513,7 +3564,7 @@ function beastTick(now) {
 function drawBeast() {
   if (!beast) return;
   const now = performance.now(), k = Math.min(1, (now - beast.t0) / BEAST_MS[beast.kind]);
-  const [x, y0] = center(beast.i), s = geo.s, t = geo.tilt;
+  const [x, y0] = center(beast.i), s = geo.s * beast.size, t = geo.tilt;
   const WL = waterLevel !== null ? waterLevel : st.sea + 0.55, y = y0 - WL * geo.ext;
   ctx.save();
   // rings spreading on the water
@@ -3551,7 +3602,7 @@ function drawBeast() {
     const up = ease(0, .3, k) * (1 - ease(.75, 1, k)), tm = (now - beast.t0) / 1000;
     // head
     const hy = y + s * .2 - up * s * .55;
-    ctx.beginPath(); ctx.ellipse(x, hy, s * .62, s * .55, 0, Math.PI, 0); ctx.fillStyle = "#6b2638"; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x, hy, s * .62, s * .55, 0, Math.PI, 0); ctx.fillStyle = "#4a4266"; ctx.fill();
     if (up > .55) for (const ex of [-.24, .24]) { ell(x + ex * s, hy - s * .18, s * .1, s * .08, "#f0c75a"); ctx.fillStyle = "#1b0d10"; ctx.fillRect(x + ex * s - s * .015, hy - s * .25, s * .03, s * .14); }
     // arms: thick tapered curls with suckers, swaying
     for (const [j, dx] of [[0, -1.25], [1, -.75], [2, .8], [3, 1.3]]) {
@@ -3559,11 +3610,11 @@ function drawBeast() {
       if (hh < s * .05) continue;
       const P = [[x + dx * s, y + s * .05], [x + dx * s + sway * s * .45, y - hh * .7], [x + dx * s + dir * s * .55 + sway * s * .25, y - hh]];
       const pt = u => [(1 - u) * (1 - u) * P[0][0] + 2 * u * (1 - u) * P[1][0] + u * u * P[2][0], (1 - u) * (1 - u) * P[0][1] + 2 * u * (1 - u) * P[1][1] + u * u * P[2][1]];
-      ctx.lineCap = "round"; ctx.strokeStyle = "#6b2638";
+      ctx.lineCap = "round"; ctx.strokeStyle = "#4a4266";
       for (let n = 0; n < 14; n++) { const a = pt(n / 14), b = pt((n + 1) / 14); ctx.lineWidth = s * (.3 - n * .018); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); }
       // the tip curls over
       const tip = pt(1); ctx.lineWidth = s * .05; ctx.beginPath(); ctx.arc(tip[0] - dir * s * .1, tip[1] + s * .02, s * .1, dir > 0 ? Math.PI : 0, dir > 0 ? Math.PI * 2.4 : -Math.PI * 1.4, dir < 0); ctx.stroke();
-      for (let n = 2; n < 12; n += 2) { const a = pt(n / 14); ell(a[0] - dir * s * .06, a[1], s * .045, s * .045, "#e7b3a2"); }
+      for (let n = 2; n < 12; n += 2) { const a = pt(n / 14); ell(a[0] - dir * s * .06, a[1], s * .045, s * .045, "#d8cfe8"); }
       ctx.lineCap = "butt";
     }
   }
@@ -3645,7 +3696,10 @@ function hud() {
   // the warning pushed out of the one message line)
   const pk = $("peakTxt");
   if (pk) { const h = st && st.hold && st.peak && st.peak.length && !st.over ? st.hold : [0, 0], q = h[1] > 0 ? 1 : h[0] > 0 ? 0 : -1;
-    pk.hidden = q < 0; if (q >= 0) { pk.className = q ? "foe" : "me"; pk.textContent = (q ? "Rival" : "You") + " on peak " + h[q] + "/" + E.WIN.peakTurns; } }
+    // you on the peak with no count yet: say why (tester 11-02: held a gold tile turns 14-18, never saw a count)
+    const on = p => st && st.peak && st.units.some(u => u.owner === p && st.peak.includes(u.i) && !st.water[u.i]);
+    const why = q >= 0 || !st.peak || !st.peak.length || st.over || !on(0) ? "" : on(1) ? "Peak shared: no count" : st.turn < st.cfg.peakFrom ? "Peak counts from turn " + st.cfg.peakFrom : "On peak: counts next turn";
+    pk.hidden = q < 0 && !why; if (q >= 0) { pk.className = q ? "foe" : "me"; pk.textContent = (q ? "Rival" : "You") + " on peak " + h[q] + "/" + E.WIN.peakTurns; } else if (why) { pk.className = "me"; pk.textContent = why; } }
   setRain(!!(st && st.storm && !st.over && !$("app").hidden));
   lettersBtn();
   $("turn").textContent = st.cfg.endless ? "Turn " + st.turn : "Turn " + Math.min(st.turn, st.cfg.lastTurn) + " of " + st.cfg.lastTurn;
@@ -3718,6 +3772,7 @@ const ACT_IC = {
   town: g('<path d="M2 15l6-6 6 6" fill="#8a3626"/><path d="M4 14h8v9H4z" fill="#c9921a"/><path d="M12 14l7-7 7 7" fill="#a8432f"/><path d="M14 13h10v11H14z" fill="#f2b01e"/>'),
   tower: g('<path d="M10 25l1.5-13h5L18 25z" fill="#b98a55"/><path d="M8 12h12V9H8z" fill="#b98a55"/><path d="M7 9h14l-7-6z" fill="#a8432f"/>'),
   farm: g('<path d="M14 25V10M9 25l-1-9M19 25l1-9"/><ellipse cx="14" cy="8" rx="2" ry="3.5" fill="#e0b345"/><ellipse cx="8" cy="13" rx="2" ry="3.5" fill="#e0b345"/><ellipse cx="20" cy="13" rx="2" ry="3.5" fill="#e0b345"/>'),
+  dock: g('<path d="M3 13h22" stroke="#8a6a3a" stroke-width="3"/><path d="M6 13v10M12 13v10M18 13v10M24 13v10" stroke="#6b4a2b" stroke-width="2"/><path d="M2 22q3-2 6 0t6 0 6 0 6 0" stroke="#6db3c8" stroke-width="2"/><path d="M15 9l6-5v5z" fill="#f3e6c8" stroke="#6b4a2b"/>'),
   quarry: g('<path d="M3 24l5-10 7-6 6 7 4 9z" fill="#a49c8e"/><path d="M15 8l6 7 4 9h-8z" fill="#7d7566"/>'),
   rest: g('<path d="M14 24S4 18 4 11a5 5 0 0110-1 5 5 0 0110 1c0 7-10 13-10 13z" fill="#e0624f"/><path d="M14 10v8M10 14h8" stroke="#fff" stroke-width="2.2"/>'),
   attack: g('<path d="M5 5l15 15M23 5L8 20" stroke="#6f6a60" stroke-width="3"/><path d="M18 24l5-5M10 24l-5-5" stroke="#a8432f" stroke-width="3"/>'),
@@ -3752,6 +3807,8 @@ function panel() {
     const first = Object.keys(E.TECHS).find(id => !E.learnBlock(st, 0, id) && letterNumbers(id));
     if (first) tip("firstLetter", "Open a letter", "Tap the glowing bottle. " + E.TECHS[first].name + ": " + letterNumbers(first) + ", for the rest of the match.");
   }
+  // food piling up with nothing to spend it on (tester 11-02: finished with 97 food unspent), once
+  if (st && st.cur === 0 && !busy && !st.over && !st.cfg.solo && st.turn >= 4 && st.players[0].food >= 25) tip("spendFood", "Spend your food", "Food does nothing in the store. Train pieces, found villages" + (E.allowed(st, "tech") ? ", open letters" : "") + (E.allowed(st, "trade") ? " or trade it for stone" : "") + ".");
   const info = $("info"), acts = $("actions");
   let html = "", buttons = [], sellBtn = null;
   tags = [];
@@ -3782,9 +3839,12 @@ function panel() {
         buttons.push(["Wall +1", E.wallCost(st, 0) + " stone", () => act({ kind: "wall", unit: su.id }), E.wallBlock(st, su)]);
         // founding on land the sea takes soon: say so once (tester: villages founded on turns 1-7 drowned at the turn
         // 15 and 19 rises; the rival builds high)
-        const soon = !st.water[su.i] && st.h[su.i] + st.wall[su.i] <= E.finalSea(st) && st.cfg.rises[st.h[su.i] + st.wall[su.i] - 1] - st.turn <= 10;
-        if (soon && !E.foundBlock(st, su)) tip("lowVillage", "Low ground", "This spot floods end of turn " + st.cfg.rises[st.h[su.i] + st.wall[su.i] - 1] + ". A village here needs walls; higher ground stays dry longer.");
-        buttons.push(["Village", E.foundCost(st, 0, su.i) + " food, uses builder", () => act({ kind: "found", unit: su.id }), E.foundBlock(st, su)]);
+        const soon = !st.water[su.i] && st.h[su.i] + st.wall[su.i] <= E.finalSea(st) && st.cfg.rises[st.h[su.i] + st.wall[su.i] - 1] >= st.turn;
+        const floodsOn = soon ? st.cfg.rises[st.h[su.i] + st.wall[su.i] - 1] : 0;
+        // any village the sea will take before the end, not only soon (tester 11-02: villages founded on turns 1-7 drowned
+        // on turn 15 with no warning; the rival wins by building high and walling early)
+        if (soon && !E.foundBlock(st, su)) tip("lowVillage", "Low ground", "A village here drowns at the end of turn " + floodsOn + ". Found on high ground, or wall it as high as the sea goes (" + E.finalSea(st) + ").");
+        buttons.push(["Village", E.foundCost(st, 0, su.i) + " food" + (floodsOn ? ", floods turn " + floodsOn : ", uses builder"), () => act({ kind: "found", unit: su.id }), E.foundBlock(st, su)]);
         for (const type of E.buildsFor(st, su)) {
           const k = E.BUILD[type], c = E.buildCost(st, 0, type);
           buttons.push([type === "tower" ? "Tower" : k.name, [c.food && c.food + " food", c.stone && c.stone + " stone"].filter(Boolean).join(", "), () => act({ kind: "build", unit: su.id, type }), E.buildBlock(st, su, type)]);
@@ -3801,7 +3861,7 @@ function panel() {
       if (homeT && homeT.owner === 0 && E.trainable(st, 0).length) tip("trainEmpty", "Training", "A village trains pieces only when it is empty. Move this piece off, then tap the village.");
       // under the clouds: any piece can brace its tile against the storm on its way
       if (aim === null && st.storm && E.inStorm(st, su.i) && !st.water[su.i]) {
-        tip("brace", "Brace", "Any piece under a cloud can Brace its tile for " + E.braceCost(st, 0) + " stone: it stays dry this storm; the water runs past it. Each further Brace in one storm costs more.");
+        tip("brace", "Brace", "Any piece under a cloud can Brace its tile for " + E.braceCost(st, 0) + " stone: it stays dry when this storm hits, however many turns away; the water runs past it. Each further Brace in one storm costs more.");
         buttons.push(["Brace", E.braceCost(st, 0) + " stone", () => act({ kind: "brace", unit: su.id }), E.braceBlock(st, su)]);
       }
       if (su.type === "spear" && !E.isDone(su) && aim === null) {
@@ -3828,7 +3888,7 @@ function panel() {
       }
     }
     // phones show only the first fact under the name: health if hurt, else when its tile floods
-    html = line(title, su.owner === 0 && E.isDone(su) ? '<span class="hint">done this turn</span>' : "", (su.hp < E.maxHp(su, st) ? chip(IC.heart, su.hp + " of " + E.maxHp(su, st) + " health") : "") + floodChip(su.i) + (E.atkOf(su, st) ? chip(IC.sword, "attack " + E.atkOf(su, st)) : "") +
+    html = line(title, su.owner === 0 && E.isDone(su) ? '<span class="hint">done this turn</span>' : "", (su.hp < E.maxHp(su, st) ? chip(IC.heart, su.hp + " of " + E.maxHp(su, st) + " health") : "") + floodChip(su.i) + (E.atkOf(su, st) ? chip(IC.sword, "hits " + Math.max(1, Math.round(2 * E.hitOf(su, st))) + (su.hp < E.maxHp(su, st) ? " (hurt)" : "")) : "") +
       (su.type === "spear" ? chip(IC.star, su.rank < 2 ? su.kills + " of " + E.RANK_KILLS[su.rank] + " kills to " + E.RANK_NAMES[su.rank + 1] : (su.kills ? su.kills + " kills" : "drilled")) : ""));
   } else if (sel && sel.town !== undefined) {
     const t = E.townAt(st, sel.town);
@@ -3888,7 +3948,7 @@ function panel() {
   sideNote();
 }
 // how many you have, for goals that count something ("you have 2"); empty once met
-const goalCount = g => { const G = GOALS[g.type]; return G && G.count && !goalMet(st, g) ? " (" + (st.over ? "you had " : "now ") + G.count(st, g) + ")" : ""; };
+const goalCount = g => { const G = GOALS[g.type]; if (!G || !G.count) return ""; if (goalMet(st, g)) return st.over ? "" : " (now " + G.count(st, g) + ", keep it)"; return " (" + (st.over ? "you had " : "now ") + G.count(st, g) + ")"; };
 // wide screens: a note from Grandmother beside the board with this island's goals, kept up to date
 function sideNote() {
   const el = $("sideNote");
@@ -3898,7 +3958,8 @@ function sideNote() {
   const lead = E.score(st, 0) - E.score(st, 1);
   // goals are only ticked off once the match is over (10-30, MO: on turn 2 "most land" and "keep your
   // capital" showed as done); while it runs, the land line says where you stand
-  const done = g => st.over && g;
+  // and only on a win, as on the result card (tester 11-02: the panel ticked "Keep your capital" on a defeat)
+  const done = g => st.over && st.winner === 0 && g;
   const stand = lead > 0 ? "you lead by " + lead : lead < 0 ? "behind by " + -lead : "level";
   const rows = st.cfg.endless ? [["Last as long as you can", false]] : [["Most land after turn " + st.cfg.lastTurn + (st.over ? "" : " (now: " + stand + ")"), done(st.winner === 0)]].concat((island.goals || []).map(g => [goalText(g) + goalCount(g), done(goalMet(st, g))]));
   el.innerHTML = "<h3>" + island.name + "</h3><p>" + island.clan.replace(/^the /, "The ").replace(/^./, c => c.toUpperCase()) + " · the sea rises on turns " + st.cfg.rises.slice(0, 6).join(", ") + (st.cfg.rises.length > 6 ? "..." : "") + "</p><ul>" +
@@ -3926,7 +3987,8 @@ function wheatSpot() {
   let best = -1, bd = 99;
   for (let i = 0; i < st.b.N; i++) {
     if (st.water[i] || own[i] !== 0 || st.bld[i] || E.townAt(st, i) || (E.unitAt(st, i) && E.unitAt(st, i).type !== "builder") || !E.BUILD.farm.on(st.h[i])) continue;
-    const d = b ? st.b.dist(b.i, i) : 0;
+    // tester 11-02: the Saltmarsh lesson pointed at wheat that flooded on turn 5; prefer land that stays dry longest
+    const d = (b ? st.b.dist(b.i, i) : 0) - 10 * (st.h[i] + st.wall[i]);
     if (d < bd) { bd = d; best = i; }
   }
   return best;
@@ -3968,7 +4030,8 @@ COACH_SETS.buildings = [
     target: wheatSpot, done: () => st.bld.some(b => b && b.owner === 0 && b.type === "farm") },
 ];
 COACH_SETS.storms = [
-  { h: "Storms", t: "Dark clouds show 2 turns before storms hit. You can't wall everything: pick what to save.", ok: true },
+  // waits for the first clouds (tester 11-02: the tip came on turn 2, the first cloud on turn 5) and gives this match's warning time
+  { h: "Storms", get t() { const n = E.turnsToStorm(st); return "Dark clouds show where a storm will hit" + (n ? " in " + n + (n > 1 ? " turns" : " turn") : "") + ". You can't wall everything: pick what to save."; }, ok: true, wait: () => !st.storm || !st.storm.ats || !st.storm.ats.length },
   { h: "Before it hits", t: "Striped tiles under it will flood. Brace them (any piece, " + E.braceCost(null, 0) + " stone), wall them, or walk out.", ok: true },
 ];
 COACH_SETS.towers = [
@@ -3980,7 +4043,8 @@ COACH_SETS.ruins = [
   { h: "Hold them", t: "A tower claims the land around it. A rival spear can take it back.", ok: true },
 ];
 COACH_SETS.finale = [
-  { h: "The last island", t: "The sea rises four times here, to level 4. Only high ground and walls last.", ok: true },
+  // the count follows this match (Easy drops the last rise)
+  { h: "The last island", get t() { const n = st.cfg.rises.length; return "The sea rises " + (["", "once", "twice", "three times", "four times"][n] || n + " times") + " here, to level " + n + ". Only high ground and walls last."; }, ok: true },
 ];
 COACH_SETS.breaker = [
   { h: "Breakers", t: "Walk a Breaker next to a rival wall. Break it, the sea floods in.", ok: true },
@@ -4017,9 +4081,9 @@ let quietTurn = -1;
 const letterReady = () => E.allowed(st, "tech") && !st.learned && Object.keys(E.TECHS).some(id => !E.learnBlock(st, 0, id));
 // glow and nudge only when a letter newly becomes affordable since you last looked at the Letters (MO 11-02: the
 // bottle glowed every turn and nagged); opening the Letters card counts as looking
-let lettersSeen = new Set(), lettersFor = null;
+let lettersSeen = new Set(), lettersFor = null, lettersTold = false;
 const affordable = () => Object.keys(E.TECHS).filter(id => !E.learnBlock(st, 0, id));
-const letterNew = () => { if (lettersFor !== st) { lettersFor = st; lettersSeen = new Set(); } return letterReady() && affordable().some(id => !lettersSeen.has(id)); };
+const letterNew = () => { if (lettersFor !== st) { lettersFor = st; lettersSeen = new Set(); lettersTold = false; } return letterReady() && affordable().some(id => !lettersSeen.has(id)); };
 function situation() {
   if (!st || st.over || st.cur !== 0 || busy || quietTurn === st.turn) return null;
   // your capital drowns at the next rise: warn a turn ahead, so a builder trained now can still wall it (tester v6:
@@ -4046,7 +4110,7 @@ function situation() {
     if (st.hold[0] > 0) return { h: "You hold the peak", t: st.hold[0] + " of " + E.WIN.peakTurns + " turns. Keep a piece on it." };
   }
   if (st.peak && st.peak.length && st.turn >= st.cfg.peakFrom - 2 && st.turn < st.cfg.peakFrom) return { h: "The peak", t: "From turn " + st.cfg.peakFrom + ", holding the gold tiles " + E.WIN.peakTurns + " turns in a row wins." };
-  if (letterNew() && !(sel && sel.town === st.capitals[0])) return { h: "A letter is ready", t: "Tap the glowing bottle at the top right to open it." };
+  if (letterNew() && !lettersTold && !(sel && sel.town === st.capitals[0])) return { h: "A letter is ready", t: "Tap the glowing bottle at the top right to open it." };
   if (allDone()) return { h: "All done", t: "Press End turn." };
   return null;
 }
@@ -4055,13 +4119,14 @@ function coachUpdate() {
     for (;;) {
       if (coach >= COACH.length) { endCoach(); return; }
       const c = COACH[coach];
+      if (c.wait && c.wait()) break;
       if (c.ok) { if (coachTurn[coach] === undefined) coachTurn[coach] = st.turn; if (st.turn > coachTurn[coach]) { coach++; continue; } break; }
       if (c.done && c.done()) { coach++; continue; }
       break;
     }
   }
   // urgent warnings (your capital floods or stands open) come before tips; tips before the other notes
-  const sit = situation(), c = coach !== null ? COACH[coach] : null, show = c || (sit && sit.urgent ? sit : tipNow || sit);
+  const sit = situation(), c = coach !== null && COACH[coach] && !(COACH[coach].wait && COACH[coach].wait()) ? COACH[coach] : null, show = c || (sit && sit.urgent ? sit : tipNow || sit);
   $("hint").hidden = !show || !st || st.over;
   const withNote = show && !c && show !== rivalNote && rivalNote && st && rivalNote.turn === st.turn && st.cur === 0 && !busy;
   if (show) $("hintTxt").innerHTML = "<b>" + show.h + "</b>" + show.t + (withNote ? "<br><b>" + rivalNote.h + "</b>" + rivalNote.t : "");
@@ -4207,11 +4272,14 @@ function onTile(i) {
     const tgt = u && E.attackTargets(st, su).find(x => x.id === u.id);
     if (tgt) { if (aim === i) act({ kind: "attack", unit: su.id, target: u.id }); else { aim = i; render(); } return; }
     if (E.sapTargets(st, su).includes(i)) { if (aim === i) act({ kind: "sap", unit: su.id, at: i }); else { aim = i; render(); } return; }
+    // a rival piece out of reach: say so and keep your piece picked (tester 11-02: the tap quietly picked the rival)
+    if (u && u.owner !== 0 && !su.acted && E.atkOf(su, st) > 0) { sfx.deny(); toast("Too far: " + NAMES[su.type] + " hits " + (E.can(su, "range") ? "from 2 tiles" : "only next to it"), 1400, "bad"); return; }
   }
   aim = null;
   if (tipNow && tipNow.id !== "firstLetter") tipNow = null;
   disbandArm = null;
   sfx.select();
+  if (u && u.owner === 1 && u.type !== "builder" && u.type !== "spear" && WHAT[u.type]) tip("piece_" + u.type, "Rival " + NAMES[u.type], WHAT[u.type]);
   if (u && u.owner === 0 && !(t && t.owner === 0 && su && su.id === u.id)) sel = { unit: u.id };
   else if (t && t.owner === 0) sel = { town: i };
   else if (u) sel = { unit: u.id };
@@ -4270,6 +4338,9 @@ $("zoomOut").addEventListener("click", () => zoomAt(geo.W / 2, geo.H / 2, view.z
 $("endTurn").addEventListener("click", async () => {
   if (busy || st.over || st.cur !== 0) return;
   sel = null; aim = null; busy = true; tipNow = null;
+  // letters you could open this turn count as seen: the bottle glows again only for a new one (tester 11-02: "A letter
+  // is ready" on turns 2, 3, 4, 5, 14, 16, 17); the hint line says it once a match
+  if (E.allowed(st, "tech")) { if (letterNew()) lettersTold = true; for (const id of affordable()) lettersSeen.add(id); }
   E.endTurn(st);
   render();
   await rivalTurn();
@@ -4334,6 +4405,8 @@ async function rivalTurn() {
     if (ok) {
       if (a.kind === "move") log.moves++;
       if (a.kind === "train") log.trained.push(NAMES[a.type] || a.type);
+      // a kind of piece you have not met: say what it does, once (tester 11-02: a rival Archer, nothing explained it)
+      if (a.kind === "train" && a.type !== "builder" && a.type !== "spear" && WHAT[a.type]) tip("piece_" + a.type, "Rival " + NAMES[a.type], WHAT[a.type]);
       const fe = st.events.find(e => e.type === "fight");
       if (tgtMine) { if (E.unitById(st, a.target)) log.hits.push("your " + NAMES[tgtType] + " -" + (fe ? fe.dmg : "?")); else log.killed.push("your " + NAMES[tgtType]); }
       log.took += st.events.filter(e => e.type === "capture" && e.by === 1).length;
@@ -4523,16 +4596,18 @@ function briefing(id) {
   const difs = Object.keys(DIFFICULTY).map(k => '<button type="button" class="dif' + (save.difficulty === k ? " on" : "") + '" data-dif="' + k + '">' + DIFFICULTY[k].label + "</button>").join("");
   const got = starsOn(save, id);
   const peakFrom = l.landmark ? (l.landmark.from || E.WIN.peakFrom) : 0;
-  const goals = [["Win: most land after turn " + l.lastTurn + ", take their capital" + (l.landmark ? ", or hold the peak " + E.WIN.peakTurns + " turns in a row from turn " + peakFrom + " (yours on it, none of theirs)" : ""), got >= 1]].concat(l.goals.map(g => [goalText(g), false]));
+  const goals = [["Win: most land after turn " + l.lastTurn + ", or take their capital" + (l.landmark ? ", or hold the peak " + E.WIN.peakTurns + " turns in a row from turn " + peakFrom + " (yours on it, none of theirs)" : ""), got >= 1]].concat(l.goals.map(g => [goalText(g), false]));
   const n = ISLANDS.filter(x => x.ready).indexOf(l) + 1;
   showCard(banner("Island " + n, "sea") + "<h2>" + l.name + "</h2>" + starRow(got, maxStars(l)) + '<p class="story">' + l.story.intro + "</p>" +
-    chips([["flag", l.clan.replace(/^the /, "").replace(/^./, c => c.toUpperCase())], ["sea", "Rises " + l.rises.join(" · ")], ["turns", l.lastTurn + " turns"]]) +
+    chips([["flag", l.clan.replace(/^the /, "").replace(/^./, c => c.toUpperCase())], ["sea", '<i id="risesTxt" style="font-style:normal">' + risesText(l, save.difficulty) + "</i>"], ["turns", l.lastTurn + " turns"]]) +
     (l.perk ? '<p class="small">' + l.clan.replace(/^the /, "The ") + ": " + l.perk.name + ". " + l.perk.text + "</p>" : "") +
     goalRows(goals) + (save.keepsakes.length ? '<p class="small">Keepsakes: ' + save.keepsakes.map(k => E.KEEPSAKES[k].name).join(", ") + "</p>" : "") + '<div class="difs" role="group" aria-label="Difficulty">' + difs + "</div>" + '<p class="small" id="difHint">' + DIFFICULTY[save.difficulty].hint + "</p>",
     [["Set sail", () => startIsland(id)], ["Back to the chart", showChart, "link"]]);
   $("card").querySelectorAll(".dif").forEach(b => b.addEventListener("click", () => {
     save.difficulty = b.dataset.dif; writeSave(save);
     $("card").querySelectorAll(".dif").forEach(x => x.classList.toggle("on", x === b));
+    // the rises shown follow the level (Easy drops the last one)
+    if ($("risesTxt")) $("risesTxt").textContent = risesText(l, save.difficulty);
     $("difHint").textContent = DIFFICULTY[b.dataset.dif].hint;
   }));
 }
@@ -4722,7 +4797,7 @@ function help() {
     pic("rank", "Ranks", "2 kills: Veteran. 4: Champion, moves 2. Or Drill a spear in a village: " + E.DRILL_COST[1].food + " food + " + E.DRILL_COST[1].stone + " stone, then " + E.DRILL_COST[2].food + " + " + E.DRILL_COST[2].stone + ". Rest: " + E.REST_COST + " food, +" + E.REST_HEAL + " health, +" + E.HOME_HEAL + " at home.") +
     (island.perk ? pic("win", island.clan.replace(/^the /, "The ") + ": " + island.perk.name, island.perk.text) : "") +
     (E.allowed(st, "shield") ? pic("shield", "Shields", E.UNIT.shield.food + " food, " + E.UNIT.shield.stone + " stone. It and your pieces next to it take " + E.SHIELD_GUARD + " less from each hit.") : "") +
-    (E.allowed(st, "dock") ? pic("boat", "Docks", "A builder builds a dock on the shore. A piece standing on your dock can sail, as its move, to any shore up to " + E.SAIL + " tiles away (blue rings).") : "") +
+    (E.allowed(st, "dock") ? pic("boat", "Docks", "A builder builds a dock on the shore, also on your own village there. A piece standing on your dock can sail, as its move, to any shore up to " + E.SAIL + " tiles away (blue rings).") : "") +
     (E.allowed(st, "boat") ? pic("boat", "Boats", (E.knows(st, 0, "docks") && !st.techs[0].includes("docks") ? "" : "Open the Docks letter. ") + "A village on the shore, or near your dock, trains one: it moves 2 on water, hits pieces on the shore, and the sea can't drown it. Next to a rival dock it blocks all sailing from that dock. It can't take villages.") : "") +
     (st.ground && st.ground.includes("forest") ? pic("forest", E.GROUND.forest.name, E.GROUND.forest.tip) : "") +
     (st.ground && st.ground.includes("marsh") ? pic("marsh", E.GROUND.marsh.name, E.GROUND.marsh.tip) : "") +
