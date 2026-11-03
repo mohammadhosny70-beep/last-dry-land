@@ -1484,10 +1484,12 @@ function moveTargets(st, u) {
     }
     return [...out];
   }
+  // taking a village is a fight: a side held back (Easy rival, levels.js rivalHolds) can't walk into one either
+  // (tester 11-03: the Easy rival took an empty village on turn 7, "no fights before turn 10" read as broken)
   const ok = n => {
     if (st.water[n] || unitAt(st, n)) return false;
     const t = townAt(st, n);
-    return !t || t.owner === u.owner || can(u, "take");
+    return !t || t.owner === u.owner || (can(u, "take") && mayAttack(st, u.owner));
   };
   // one step per point of move (a Champion gets +1); a step into a rival village ends the move there
   const first = nbrs(u.i).filter(ok);
@@ -1577,10 +1579,12 @@ function drySites(st, p, from, max = 3) {
   const own = territory(st), wet = floodSet(st, finalSea(st)), { N, nbrs, dist } = st.b;
   const dry = i => !st.water[i] && !wet.has(i);
   const ok = i => dry(i) && !townAt(st, i) && (own[i] === -1 || own[i] === p);
-  const value = i => [i, ...nbrs(i)].filter(dry).length - (nearVillage(st, i) ? 2 : 0);
+  // new dry land it would add counts; land already yours adds little (tester 11-03 Gullrock: every flag sat inside
+  // your own land, dear and worth 3-5 tiles)
+  const value = i => [i, ...nbrs(i)].filter(n => dry(n) && own[n] !== p).length + 0.25 * [i, ...nbrs(i)].filter(n => dry(n) && own[n] === p).length - (nearVillage(st, i) ? 2 : 0);
   const pick = (r, n) => {
     const c = [];
-    for (let i = 0; i < N; i++) if (dist(from, i) <= r && ok(i)) c.push(i);
+    for (let i = 0; i < N; i++) if (dist(from, i) <= r && ok(i) && value(i) >= 2) c.push(i);
     return c.sort((a, b) => value(b) - value(a) || dist(from, a) - dist(from, b) || a - b).slice(0, n);
   };
   const near = pick(2, max);
@@ -1793,7 +1797,7 @@ function apply(st, a) {
     if (t && t.owner !== u.owner) {
       const from = t.owner;
       st.events.push({ type: "capture", town: t.i, by: u.owner, from });
-      t.owner = u.owner; u.acted = true;
+      t.owner = u.owner; u.acted = true; st.lastHit[u.owner] = st.turn;
       captured(st, t, u.owner, from);
       checkElimination(st);
     }
@@ -3195,10 +3199,13 @@ function star(x, y, r) {
   fp(pts, "#ffd34d", LOOK.outline);
 }
 // small yellow flag: a village may be founded here
+// drawn from the tile's middle and big enough to read without zooming (tester 11-03: "sits on the top edge")
 function flag(x, y) {
   const s = geo.s;
-  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - s * .5); ctx.strokeStyle = LOOK.pole; ctx.lineWidth = 1.5; ctx.stroke();
-  fp([[x, y - s * .5], [x + s * .26, y - s * .42], [x, y - s * .34]], COL[0], LOOK.outline);
+  ell(x, y, s * .09, s * .09 * geo.tilt, "rgba(0,0,0,.35)");
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - s * .72); ctx.strokeStyle = LOOK.outline; ctx.lineWidth = Math.max(2.5, s * .07); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - s * .72); ctx.strokeStyle = LOOK.pole; ctx.lineWidth = Math.max(1.5, s * .04); ctx.stroke();
+  fp([[x, y - s * .72], [x + s * .4, y - s * .6], [x, y - s * .48]], COL[0], LOOK.outline);
 }
 // wheat tufts mark land that gives food; rocks mark land that gives stone
 function crops(x, y, n) {
@@ -3534,7 +3541,7 @@ function draw() {
       }
       if (i === (su && su.i)) ring(x, ty, "#fff4c2", 2.5);
       if (i === ct) { ring(x, ty, "#ffd34d", Math.max(3, s * .16), .8); arrowDown(x, ty - s * 1.25); }
-      if (siteT.has(i)) flag(x + s * .3, ty - s * .05 * geo.tilt);
+      if (siteT.has(i)) flag(x - s * .04, ty + s * .14 * geo.tilt);
       // a tile the picked piece can walk to: a white ring with a dot (red ring = a rival village it would take)
       if (moveT.has(i) && (E.townAt(st, i) || st.bld[i])) lateRings.push([x, ty, i]);
       else if (moveT.has(i)) {
@@ -3778,7 +3785,7 @@ function hud() {
   if (pk) { const h = st && st.hold && st.peak && st.peak.length && !st.over ? st.hold : [0, 0], q = h[1] > 0 ? 1 : h[0] > 0 ? 0 : -1;
     // you on the peak with no count yet: say why (tester 11-02: held a gold tile turns 14-18, never saw a count)
     const on = p => st && st.peak && st.units.some(u => u.owner === p && st.peak.includes(u.i) && !st.water[u.i]);
-    const why = q >= 0 || !st.peak || !st.peak.length || st.over || !on(0) ? "" : on(1) ? "Peak shared: no count" : st.turn < st.cfg.peakFrom ? "Peak counts from turn " + st.cfg.peakFrom : "On peak: counts next turn";
+    const why = q >= 0 || !st.peak || !st.peak.length || st.over || !on(0) ? "" : on(1) ? "Rival on gold too: no count" : st.turn < st.cfg.peakFrom ? "Peak counts from turn " + st.cfg.peakFrom : "On peak: counts next turn";
     pk.hidden = q < 0 && !why; if (q >= 0) { pk.className = q ? "foe" : "me"; pk.textContent = (q ? "Rival" : "You") + " on peak " + h[q] + "/" + E.WIN.peakTurns; } else if (why) { pk.className = "me"; pk.textContent = why; } }
   setRain(!!(st && st.storm && !st.over && !$("app").hidden));
   lettersBtn();
@@ -3895,6 +3902,10 @@ function panel() {
   // your pieces that can neither move nor attack this turn say so on the board (tester: "nothing tells you a piece
   // can't move until you tap it"); Sell frees the tile
   if (st.cur === 0 && !busy && !st.over) for (const u of st.units) if (u.owner === 0 && !u.moved && !u.acted && !E.moveTargets(st, u).length && !E.attackTargets(st, u).length) tag(u.i, "stuck", "bad");
+  // you and the rival both on the peak: tag their pieces on gold, so "Rival on gold too" can be found (tester 11-03:
+  // the peak is wide; the rival piece was out of view)
+  if (st.cur === 0 && !busy && !st.over && st.peak && st.peak.length && st.units.some(u => u.owner === 0 && st.peak.includes(u.i) && !st.water[u.i]))
+    for (const u of st.units) if (u.owner === 1 && st.peak.includes(u.i) && !st.water[u.i]) tag(u.i, "on gold", "bad");
   const su = sel && sel.unit ? E.unitById(st, sel.unit) : null;
   if (st.over) html = line('<span class="name">Match over</span>', "", "");
   else if (st.cur !== 0 || busy) html = line('<span class="name">The rival moves</span>', "", "");
@@ -4345,6 +4356,9 @@ function onTile(i) {
   const u = E.unitAt(st, i), t = E.townAt(st, i);
   const su = sel && sel.unit ? E.unitById(st, sel.unit) : null;
   if (su && su.owner === 0) {
+    // tapping the picked piece while a hit or move is previewed cancels the preview and keeps the piece (tester 11-03:
+    // after an attack preview, tapping your spear felt like "cancel" but switched to the village)
+    if (i === su.i && aim !== null) { aim = null; sfx.select(); render(); return; }
     if (E.moveTargets(st, su).includes(i)) {
       const into = t && t.owner === 0 && !u && !st.cfg.solo;
       if (into && aim !== i) { aim = i; render(); return; }
@@ -4576,7 +4590,8 @@ function showEnd(e) {
   // the first win on an island earns a keepsake: pick 1 of 2 not owned yet
   const offer = firstWin && E.KEEPSAKES_ON ? keepsakeOffer(island.id) : [];
   // the first win on the last island ends the journey: a closing scene on the chart, then the journey card
-  const ending = won && island.id === LAST_ISLAND && !save.journeyDone;
+  // ...and only once every charted island is won (tester 11-03: with all islands open it played after 3 of 7)
+  const ending = won && island.id === LAST_ISLAND && !save.journeyDone && ISLANDS.every(l => !l.ready || wonIsland(save, l.id));
   const next = ending ? () => finale(offer) : offer.length ? () => pickKeepsake(offer) : showChart;
   const title = won ? island.name + " is ours" : st.winner === 1 ? island.clan.replace(/^the /, "The ").replace(/^./, c => c.toUpperCase()) + " hold " + island.name : "The sea leaves a tie";
   const why = e.reason === "capital" ? (won ? "You took their capital." : "They took your capital.") : e.reason === "peak" ? (won ? "You held the peak for " + E.WIN.peakTurns + " turns." : "They held the peak for " + E.WIN.peakTurns + " turns.") : e.reason === "towns" ? (won ? "The rival lost its last village." : "You lost your last village.") : e.tiebreak ? "Equal land: " + (e.tiebreak === "villages" ? "more villages" : "more pieces") + " wins." : "";
@@ -4951,7 +4966,7 @@ window.addEventListener("resize", () => { if (st && !$("app").hidden) { layout()
 showChart();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (st && !$("app").hidden) { layout(); render(); } else showChart(); });
 // test hook for tools/drive scripts (headless screenshots)
-window.__ldl = { finale, journeyCard, showEnd, beast: k => maybeBeast(k || "whale"), sit: () => situation(), nums: id => letterNumbers(id), mark: () => rivalMark, note: () => rivalNote, geo: () => ({ ...geo, view: { ...view } }), showModes, startMode, resumeMatch, briefing, help, state: () => st, tap: onTile, busy: () => busy, startIsland, showChart, save: () => save };
+window.__ldl = { finale, journeyCard, showEnd, sel: () => sel, beast: k => maybeBeast(k || "whale"), sit: () => situation(), nums: id => letterNumbers(id), mark: () => rivalMark, note: () => rivalNote, geo: () => ({ ...geo, view: { ...view } }), showModes, startMode, resumeMatch, briefing, help, state: () => st, tap: onTile, busy: () => busy, startIsland, showChart, save: () => save };
 
 return {  };
 })();
