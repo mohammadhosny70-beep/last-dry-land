@@ -114,6 +114,12 @@ button.icon{width:42px;height:42px;padding:0;border-radius:50%;display:grid;plac
 .chartSvg .isle.go{cursor:pointer}
 .chartSvg .pulse{animation:pulse 1.6s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.25}}
+/* journey finale (MO 11-03): the house on the peak goes up when the route has been drawn; the bar keeps only the lines */
+.chartSvg .late{opacity:0;animation:houseIn .9s ease-out 7s forwards}
+@keyframes houseIn{from{opacity:0;transform:translateY(1.5px)}to{opacity:1;transform:none}}
+.chartSvg .fire{animation:fire 1.1s ease-in-out infinite}
+@keyframes fire{50%{opacity:.45}}
+#chartBar.finale button{display:none}
 #chartBar{display:flex;align-items:center;gap:10px;padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));box-shadow:inset 0 3px 0 var(--woodDark)}
 #chartNote{flex:1;min-width:0;font-size:15px;line-height:1.3}
 #resumeBtn{background:var(--seal);color:var(--cream);box-shadow:inset 0 -3px 0 var(--sealDark);padding:10px 16px;font-family:var(--sign);font-weight:400;font-size:17px;white-space:nowrap}
@@ -181,7 +187,7 @@ button.icon:disabled{opacity:.35}
 .card .modeRow button{grid-row:1 / span 2;grid-column:2;font-size:22px;padding:6px 20px}
 .card .islePick{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px}
 .card .islePick button{font-size:23px}
-@media (prefers-reduced-motion: reduce){.chartSvg .pulse{animation:none}.card .stars svg{animation:none;transform:none;opacity:1}}
+@media (prefers-reduced-motion: reduce){.chartSvg .pulse,.chartSvg .fire{animation:none}.chartSvg .late{animation:none;opacity:1}.card .stars svg{animation:none;transform:none;opacity:1}}
 @media (prefers-reduced-motion: reduce){#toast{transition:none}}
 #peakTxt{font-weight:700;white-space:nowrap}
 #peakTxt.foe{color:#ff8a8f}
@@ -2724,7 +2730,7 @@ const { ISLANDS } = __m.levels;
 const KEY = "ldl.save", VERSION = 1;
 
 function blank() {
-  return { v: VERSION, islands: {}, difficulty: "normal", coachDone: {}, tipsSeen: {}, modes: {}, lastWon: null, keepsakes: [] };
+  return { v: VERSION, islands: {}, difficulty: "normal", coachDone: {}, tipsSeen: {}, modes: {}, lastWon: null, keepsakes: [], journeyDone: false };
 }
 const read = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 
@@ -2781,7 +2787,8 @@ const { starsOn, wonIsland, isOpen } = __m.save;
 // the chart is 100 wide; its height follows the screen (taller on a phone) so it fills the space
 const W = 100;
 let H = 132;
-const pos = l => [l.chart.x, 8 + l.chart.y * (H - 14) / 100];
+// islands sit in the left 92% so the torn right edge (tornEdge) can run deep without cutting a name
+const pos = l => [l.chart.x * 0.92, 8 + l.chart.y * (H - 14) / 100];
 
 // a lumpy island outline, the same every time for the same id
 function blob(id, cx, cy, r) {
@@ -2816,7 +2823,44 @@ const starPath = (x, y, r) => {
   return d + "Z";
 };
 
-function renderChart(el, save, { onPick, onInfo }) {
+// a house on the last island once the journey is done (MO 11-03 journey finale), with a fire by it
+// drawn at 1.6x: the outer group scales, the inner one carries the CSS fade (a CSS transform would undo the scale)
+const house = (x, y, cls) => '<g transform="translate(' + x + " " + y + ") scale(1.6) translate(" + -x + " " + -y + ')"><g' + (cls ? ' class="' + cls + '"' : "") + '><path d="M' + (x - 2.2) + " " + y + "v-2.4l2.2 -1.9 2.2 1.9v2.4z" + '" fill="#f3e6c8" stroke="#3a2414" stroke-width=".3"/>' +
+  '<path d="M' + (x - 2.7) + " " + (y - 2.2) + "l2.7 -2.4 2.7 2.4" + '" fill="none" stroke="#9a3a26" stroke-width=".7" stroke-linejoin="round"/>' +
+  '<path d="M' + (x - 0.5) + " " + y + "v-1.2h1v1.2z" + '" fill="#6b4a2b"/>' +
+  '<circle cx="' + (x + 3.4) + '" cy="' + (y - 0.4) + '" r=".7" fill="#f2b01e" class="fire"/></g></g>';
+// a hint that more islands are coming, kept a mystery (MO 11-03): the chart itself is torn down its right edge, and
+// after the journey the game says there may be another half. No drawing of what is on it.
+const MORE_ISLANDS = "Grandmother's chart was torn in two. There may be another half.";
+// the torn right edge, the same every time (MO 11-03: "a white line is not a tear"): a rip with big slow bends and
+// small frayed teeth; beyond it the table shows, the paper's lifted edge throws a soft shadow on it, and along the rip
+// a band of bare paper fibre of uneven width
+function tornEdge() {
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed >>> 8) / 16777216; };
+  const pts = [];
+  for (let y = -1; y < H + 1.2; y += 0.7 + rnd() * 1.1)
+    pts.push([94.4 + 1.6 * Math.sin(y / 11 + 0.6) + 0.8 * Math.sin(y / 4.1) + (rnd() - 0.5) * 0.9, y]);
+  pts.push([94.8, H + 1.2]);
+  const P = list => list.map(([x, y], k) => (k ? "L" : "M") + x.toFixed(2) + " " + y.toFixed(2)).join("");
+  const line = P(pts);
+  // the fibre band: the rip on one side, and the same rip pushed into the paper by 0.3-1.3 on the other
+  let w = 0.7;
+  const inner = pts.map(([x, y]) => { w = Math.max(0.3, Math.min(1.3, w + (rnd() - 0.5) * 0.5)); return [x - w, y]; }).reverse();
+  const fibre = line + P(inner).replace(/^M/, "L") + "Z";
+  return {
+    svg: '<filter id="tornShade" x="-50%" y="-5%" width="200%" height="110%"><feGaussianBlur stdDeviation=".7"/></filter>' +
+      // the table beyond the rip, and the shadow of the lifted paper edge falling on it
+      '<path d="' + line + "L101 " + (H + 2) + "L101 -2Z" + '" fill="#b89a64"/>' +
+      '<path d="' + line + '" fill="none" stroke="rgba(45,28,10,.55)" stroke-width="1.6" filter="url(#tornShade)" transform="translate(.9 .3)"/>' +
+      // paper discoloured near the rip
+      '<path d="' + line + '" fill="none" stroke="rgba(120,80,30,.16)" stroke-width="3" filter="url(#tornShade)" transform="translate(-1.6 0)"/>' +
+      '<path d="' + fibre + '" fill="#fbf4e2"/>' +
+      '<path d="' + line + '" fill="none" stroke="rgba(110,80,40,.5)" stroke-width=".18"/>',
+  };
+}
+
+function renderChart(el, save, { onPick, onInfo, finale = false }) {
   const aspect = el.clientWidth ? el.clientHeight / el.clientWidth : 1.32;
   H = Math.round(Math.min(200, Math.max(132, W * aspect)));
   let out = '<svg viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="xMidYMid meet" class="chartSvg" role="img" aria-label="Sea chart">';
@@ -2838,14 +2882,18 @@ function renderChart(el, save, { onPick, onInfo }) {
   }
   // compass rose
   out += '<g transform="translate(12 16)" opacity=".75"><circle r="7" fill="none" stroke="#6b4a2b" stroke-width=".4"/><path d="M0 -9L1.6 0 0 9 -1.6 0Z" fill="#6b4a2b"/><path d="M-9 0L0 1.6 9 0 0 -1.6Z" fill="#a8432f"/><text y="-10.5" text-anchor="middle" font-size="3.2" fill="#3b2812" font-weight="700" font-family="Patrick Hand, cursive">N</text></g>';
-  out += '<text x="61" y="12" text-anchor="middle" font-size="6" fill="#3a2414" font-family="Homemade Apple, Patrick Hand, cursive">Grandmother\'s Chart</text>';
-  out += '<path d="M34 15h48" stroke="#7a5a30" stroke-width=".35"/>';
+  out += '<text x="55" y="12" text-anchor="middle" font-size="6" fill="#3a2414" font-family="Homemade Apple, Patrick Hand, cursive">Grandmother\'s Chart</text>';
+  out += '<path d="M28 15h48" stroke="#7a5a30" stroke-width=".35"/>';
   // routes: sailed ones solid red-brown, the rest faint
   let fresh = null;
   for (let k = 0; k + 1 < ISLANDS.length; k++) {
     const a = ISLANDS[k], b = ISLANDS[k + 1], sailed = wonIsland(save, a.id), d = route(a, b);
-    out += '<path d="' + d + '" fill="none" stroke="' + (sailed ? "#9a3a26" : "rgba(90,70,40,.45)") + '" stroke-width="' + (sailed ? ".8" : ".5") + '" stroke-dasharray="' + (sailed ? "2 1.2" : "1 1.6") + '"' + (sailed && save.lastWon === a.id ? ' mask="url(#reveal)"' : "") + "/>";
-    if (sailed && save.lastWon === a.id) fresh = d;
+    // the finale draws the whole journey again, island to island
+    const anim = finale || (sailed && save.lastWon === a.id);
+    if (finale) out += '<path d="' + d + '" fill="none" stroke="rgba(90,70,40,.45)" stroke-width=".5" stroke-dasharray="1 1.6"/>';
+    out += '<path d="' + d + '" fill="none" stroke="' + (sailed || finale ? "#9a3a26" : "rgba(90,70,40,.45)") + '" stroke-width="' + (sailed || finale ? ".8" : ".5") + '" stroke-dasharray="' + (sailed || finale ? "2 1.2" : "1 1.6") + '"' + (anim ? ' mask="url(#reveal)"' : "") + "/>";
+    if (finale) fresh = (fresh ? fresh + d.replace(/^M[^Q]*/, " ") : d);
+    else if (anim) fresh = d;
   }
   // islands
   ISLANDS.forEach(l => {
@@ -2871,8 +2919,15 @@ function renderChart(el, save, { onPick, onInfo }) {
     }
     out += "</g>";
   });
+  if (finale || save.journeyDone) {
+    const last = ISLANDS[ISLANDS.length - 1], [x, y] = pos(last);
+    out += house(x - 3.4, y + 1.6, finale ? "late" : "");
+    if (!finale) out += '<text x="' + (x + 6) + '" y="' + (y + 19) + '" text-anchor="middle" font-size="3.6" fill="#3a2414" font-family="Homemade Apple, Patrick Hand, cursive" transform="rotate(-6 ' + (x + 6) + " " + (y + 19) + ')">We made it</text>';
+  }
   out += "</g>";
-  if (fresh) out += '<g id="boat"><path d="M-1.8 0h3.6l-1 1.2h-1.6z" fill="#6b4a2b"/><path d="M0 0v-3.2l1.6 2.6z" fill="#f3e6c8" stroke="#6b4a2b" stroke-width=".2"/><animateMotion dur="2.4s" fill="freeze" path="' + fresh + '"/></g>';
+  // the chart is torn down its right edge: the paper ends in a ragged line with pale fibres along it
+  out += '<g class="isle more" data-id="more">' + tornEdge().svg + "</g>";
+  if (fresh) out += '<g id="boat"><path d="M-1.8 0h3.6l-1 1.2h-1.6z" fill="#6b4a2b"/><path d="M0 0v-3.2l1.6 2.6z" fill="#f3e6c8" stroke="#6b4a2b" stroke-width=".2"/><animateMotion dur="' + (finale ? 7 : 2.4) + 's" fill="freeze" path="' + fresh + '"/></g>';
   out += "</svg>";
   el.innerHTML = out;
 
@@ -2883,9 +2938,11 @@ function renderChart(el, save, { onPick, onInfo }) {
     const len = rp.getTotalLength ? rp.getTotalLength() : 60;
     rp.style.strokeDasharray = len; rp.style.strokeDashoffset = len;
     rp.getBoundingClientRect();
-    rp.style.transition = "stroke-dashoffset 2.4s ease-in-out"; rp.style.strokeDashoffset = 0;
+    rp.style.transition = "stroke-dashoffset " + (finale ? "7s linear" : "2.4s ease-in-out"); rp.style.strokeDashoffset = 0;
   }
   el.querySelectorAll(".isle").forEach(g => g.addEventListener("click", () => {
+    if (finale) return;
+    if (g.dataset.id === "more") { if (save.journeyDone) onInfo(MORE_ISLANDS); return; }
     const l = ISLANDS.find(x => x.id === g.dataset.id);
     if (!l.ready) onInfo(l.name + " is not charted yet. " + l.story.intro);
     else if (!isOpen(save, l.id)) onInfo("Win " + ISLANDS[ISLANDS.indexOf(l) - 1].name + " first.");
@@ -2894,7 +2951,7 @@ function renderChart(el, save, { onPick, onInfo }) {
   return !!fresh;
 }
 
-return { renderChart };
+return { renderChart, MORE_ISLANDS };
 })();
 __m.game = (function () {
 // Last Dry Land - the page: the sea chart, island briefings, and the match itself (the board as
@@ -2918,7 +2975,7 @@ function savedMatch() {
 const { sfx, isMuted, setMuted, setSea, setRain } = __m.audio;
 const { ISLANDS, islandById, nextIsland, DIFFICULTY, GOALS, goalText, goalMet, starsFor, maxStars } = __m.levels;
 const { loadSave, writeSave, recordResult, starsOn, isOpen, wonIsland } = __m.save;
-const { renderChart } = __m.chart;
+const { renderChart, MORE_ISLANDS } = __m.chart;
 const UNIT = E.UNIT;
 const save = loadSave();
 let island = null;
@@ -4518,14 +4575,16 @@ function showEnd(e) {
   recordResult(save, island.id, won, res.stars);
   // the first win on an island earns a keepsake: pick 1 of 2 not owned yet
   const offer = firstWin && E.KEEPSAKES_ON ? keepsakeOffer(island.id) : [];
-  const next = offer.length ? () => pickKeepsake(offer) : showChart;
+  // the first win on the last island ends the journey: a closing scene on the chart, then the journey card
+  const ending = won && island.id === LAST_ISLAND && !save.journeyDone;
+  const next = ending ? () => finale(offer) : offer.length ? () => pickKeepsake(offer) : showChart;
   const title = won ? island.name + " is ours" : st.winner === 1 ? island.clan.replace(/^the /, "The ").replace(/^./, c => c.toUpperCase()) + " hold " + island.name : "The sea leaves a tie";
   const why = e.reason === "capital" ? (won ? "You took their capital." : "They took your capital.") : e.reason === "peak" ? (won ? "You held the peak for " + E.WIN.peakTurns + " turns." : "They held the peak for " + E.WIN.peakTurns + " turns.") : e.reason === "towns" ? (won ? "The rival lost its last village." : "You lost your last village.") : e.tiebreak ? "Equal land: " + (e.tiebreak === "villages" ? "more villages" : "more pieces") + " wins." : "";
   const goals = [["Win the island", won]].concat(island.goals.map((g, k) => [goalText(g) + (res.met[k] ? "" : goalCount(g)), res.met[k]]));
   const tally = '<div class="tally"><div class="side you"><b>' + a + "</b><span>Your land</span></div><span class=\"vs\">to</span><div class=\"side them\"><b>" + b + "</b><span>" + island.clan.replace(/^the /, "") + "</span></div></div>";
   showCard('<div class="banner ' + (won ? "win" : "lose") + '"><span>' + (won ? "Victory" : st.winner === 1 ? "Defeat" : "Tie") + "</span></div>" + "<h2>" + title + "</h2>" + starRow(res.stars, maxStars(island)) + tally +
     (why ? '<p class="small">' + why + "</p>" : "") + goalRows(goals) + (won && island.story.win ? '<p class="story">' + island.story.win + "</p>" : ""),
-    won ? [[offer.length ? "Pick a keepsake" : "Back to the chart", next], ["Play again", () => startIsland(island.id), "link"]] : [["Try again", () => startIsland(island.id)], ["Back to the chart", showChart, "link"]]);
+    won ? [[ending ? "Finish the journey" : offer.length ? "Pick a keepsake" : "Back to the chart", next], ["Play again", () => startIsland(island.id), "link"]] : [["Try again", () => startIsland(island.id)], ["Back to the chart", showChart, "link"]]);
 }
 // two keepsakes the player does not own yet, the same two for the same island every time
 function keepsakeOffer(id) {
@@ -4539,6 +4598,36 @@ function pickKeepsake(offer) {
     offer.map((k, n) => [E.KEEPSAKES[k].name, () => { if (!save.keepsakes.includes(k)) save.keepsakes.push(k); writeSave(save); showChart(); }, n ? "link" : ""]));
 }
 function restart() { startIsland(island.id); }
+// ---------- the end of the journey (MO 11-03) ----------
+// the first win on the last island: the chart draws the whole route again, a house goes up on the peak, three
+// lines in the bar below, then the journey card with a hint that more islands are coming. Tap to skip.
+const LAST_ISLAND = ISLANDS.filter(l => l.ready).at(-1).id;
+const FINALE_LINES = ["We pulled the boats up onto the peak.", "Grandmother drew this hill before any of us were born.", "Tonight there are fires on it."];
+let finaleTimers = [];
+function finale(offer = []) {
+  save.journeyDone = true; save.lastWon = null; writeSave(save);
+  $("app").hidden = true; $("chart").hidden = false; setSea(0); setRain(false);
+  $("chartBar").classList.add("finale");
+  renderChart($("chartMap"), save, { onPick: () => {}, onInfo: () => {}, finale: true });
+  const fast = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const done = () => {
+    finaleTimers.forEach(clearTimeout); finaleTimers = [];
+    $("chartMap").removeEventListener("click", done); $("chartBar").classList.remove("finale");
+    journeyCard(offer);
+  };
+  chartNote("");
+  FINALE_LINES.forEach((t, k) => finaleTimers.push(setTimeout(() => chartNote(t), fast ? 0 : 2400 + k * 2600)));
+  finaleTimers.push(setTimeout(done, fast ? 2500 : 11000));
+  $("chartMap").addEventListener("click", done);
+}
+function journeyCard(offer = []) {
+  const ready = ISLANDS.filter(l => l.ready), won = ready.filter(l => wonIsland(save, l.id)).length;
+  const stars = ready.reduce((n, l) => n + starsOn(save, l.id), 0), most = ready.reduce((n, l) => n + maxStars(l), 0);
+  showCard(banner("The journey", "win") + "<h2>Home on the last dry land</h2>" +
+    '<p class="small">Islands won: ' + won + " of " + ready.length + "<br>Stars: " + stars + " of " + most + "</p>" +
+    '<p class="story">' + MORE_ISLANDS + "</p>",
+    [[offer.length ? "Pick a keepsake" : "Back to the chart", offer.length ? () => pickKeepsake(offer) : showChart]]);
+}
 // results in the other modes: nothing on the chart changes, each keeps its own best
 function modeEnd(e) {
   const [a, b] = e.scores, won = st.winner === 0, id = island.id;
@@ -4608,7 +4697,7 @@ function showChart() {
   const m = savedMatch();
   $("resumeBtn").hidden = !m;
   if (m) $("resumeBtn").textContent = "Continue " + islandById(m.island).name;
-  chartNote(m ? "" : ISLANDS.some(l => l.ready && !starsOn(save, l.id)) ? "Tap an island to sail there." : "Every charted island is won. More of the chart is coming.");
+  chartNote(m ? "" : ISLANDS.some(l => l.ready && !starsOn(save, l.id)) ? "Tap an island to sail there." : save.journeyDone ? MORE_ISLANDS : "Every charted island is won. More of the chart is coming.");
 }
 let noteTimer = 0;
 function chartNote(msg) {
@@ -4862,7 +4951,7 @@ window.addEventListener("resize", () => { if (st && !$("app").hidden) { layout()
 showChart();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (st && !$("app").hidden) { layout(); render(); } else showChart(); });
 // test hook for tools/drive scripts (headless screenshots)
-window.__ldl = { beast: k => maybeBeast(k || "whale"), sit: () => situation(), nums: id => letterNumbers(id), mark: () => rivalMark, note: () => rivalNote, geo: () => ({ ...geo, view: { ...view } }), showModes, startMode, resumeMatch, briefing, help, state: () => st, tap: onTile, busy: () => busy, startIsland, showChart, save: () => save };
+window.__ldl = { finale, journeyCard, showEnd, beast: k => maybeBeast(k || "whale"), sit: () => situation(), nums: id => letterNumbers(id), mark: () => rivalMark, note: () => rivalNote, geo: () => ({ ...geo, view: { ...view } }), showModes, startMode, resumeMatch, briefing, help, state: () => st, tap: onTile, busy: () => busy, startIsland, showChart, save: () => save };
 
 return {  };
 })();
