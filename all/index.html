@@ -1555,6 +1555,31 @@ function foundBlock(st, u) {
   if (st.players[u.owner].food < foundCost(st, u.owner, u.i)) return "Needs " + foundCost(st, u.owner, u.i) + " food";
   return "";
 }
+// the turn at whose end the sea takes tile i as walled now (0 = never, or that rise has passed)
+function floodsOnTurn(st, i) {
+  if (st.water[i]) return 0;
+  for (let k = st.sea + 1; k <= finalSea(st); k++) if (floodSet(st, k).has(i)) return st.cfg.rises[k - 1] >= st.turn ? st.cfg.rises[k - 1] : 0;
+  return 0;
+}
+// village sites to flag for a builder at `from` (tester 11-02: "maps need dry village sites"; every flag used to
+// go on any tile within 2, low ones too, and new players founded where the sea later took the village).
+// Only tiles the sea never reaches (as walled now) and that you may found on; best first by dry land around
+// them, a spot next to a village counts less (dearer). Within 2 steps, at most 3; with none that close, the 2
+// best within 4, so the board shows where to walk. Shows information only: no rule or price changes.
+function drySites(st, p, from, max = 3) {
+  if (!allowed(st, "village")) return [];
+  const own = territory(st), wet = floodSet(st, finalSea(st)), { N, nbrs, dist } = st.b;
+  const dry = i => !st.water[i] && !wet.has(i);
+  const ok = i => dry(i) && !townAt(st, i) && (own[i] === -1 || own[i] === p);
+  const value = i => [i, ...nbrs(i)].filter(dry).length - (nearVillage(st, i) ? 2 : 0);
+  const pick = (r, n) => {
+    const c = [];
+    for (let i = 0; i < N; i++) if (dist(from, i) <= r && ok(i)) c.push(i);
+    return c.sort((a, b) => value(b) - value(a) || dist(from, a) - dist(from, b) || a - b).slice(0, n);
+  };
+  const near = pick(2, max);
+  return near.length ? near : pick(4, 2);
+}
 // a village (not the capital) grows into a town
 function growBlock(st, town) {
   if (!allowed(st, "town", town.owner)) return allowed(st, "town") ? "Learn Towns first" : "Not on this island";
@@ -1912,7 +1937,7 @@ function checkElimination(st) {
 
 // for the Letters card (letters in numbers)
 
-return { POWER, SAIL, SHIELD_GUARD, WOUND, GROUND, WIN, TECHS, BRANCHES, KEEPSAKES_ON, KEEPSAKES, UNIT, BUILD, RANK_KILLS, RANK_NAMES, MAX_WALL, WALL_COST, GROW_COST, TRADE_RATE, NEAR_VILLAGE_EXTRA, REST_HEAL, HOME_HEAL, REST_COST, VILLAGE_GUARD, DRILL_COST, STORM, starsFor, CAPITAL_GIVES, stat, cloneState, freeze, thaw, newGame, territory, floodSet, applyFlood, stormSet, income, cutOff, contested, score, turnsToRise, sailTargets, moveTargets, mayAttack, attackTargets, fight, braceBlock, wallBlock, foundBlock, growBlock, tradeBlock, restBlock, drillBlock, buildBlock, sapTargets, boatLaunch, trainBlock, holdsPeak, learnBlock, apply, endTurn, can, typeFor, unitCost, buildCost, wallCost, maxWall, growCost, drillCost, restCost, tradeRate, guardOf, unitMove, atkOf, maxHp, hitOf, townCost, nearVillage, foundCost, restHeal, allowed, unitAt, townAt, unitById, isDone, turnsToStorm, inStorm, finalSea, coastal, blockaded, braceCost, buildsFor, trainable, sellValue, techCost, knows, techHere };
+return { POWER, SAIL, SHIELD_GUARD, WOUND, GROUND, WIN, TECHS, BRANCHES, KEEPSAKES_ON, KEEPSAKES, UNIT, BUILD, RANK_KILLS, RANK_NAMES, MAX_WALL, WALL_COST, GROW_COST, TRADE_RATE, NEAR_VILLAGE_EXTRA, REST_HEAL, HOME_HEAL, REST_COST, VILLAGE_GUARD, DRILL_COST, STORM, starsFor, CAPITAL_GIVES, stat, cloneState, freeze, thaw, newGame, territory, floodSet, applyFlood, stormSet, income, cutOff, contested, score, turnsToRise, sailTargets, moveTargets, mayAttack, attackTargets, fight, braceBlock, wallBlock, foundBlock, floodsOnTurn, drySites, growBlock, tradeBlock, restBlock, drillBlock, buildBlock, sapTargets, boatLaunch, trainBlock, holdsPeak, learnBlock, apply, endTurn, can, typeFor, unitCost, buildCost, wallCost, maxWall, growCost, drillCost, restCost, tradeRate, guardOf, unitMove, atkOf, maxHp, hitOf, townCost, nearVillage, foundCost, restHeal, allowed, unitAt, townAt, unitById, isDone, turnsToStorm, inStorm, finalSea, coastal, blockaded, braceCost, buildsFor, trainable, sellValue, techCost, knows, techHere };
 })();
 __m.ai = (function () {
 // Last Dry Land - computer rival. Each unit scores what it can do now (hand-set values below); on
@@ -3379,10 +3404,8 @@ function draw() {
   // shores a piece on its dock can sail to get blue rings, not white (MO 11-02: docks were not clear)
   const sailT = new Set(mine && !su.moved && !su.acted ? E.sailTargets(st, su) : []);
   const hitT = new Set(mine ? [...E.attackTargets(st, su).map(t => t.i), ...E.sapTargets(st, su)] : []);
-  // with a builder picked, flag the nearby tiles where it could found a village
-  const siteT = new Set();
-  if (mine && su.type === "builder" && !su.acted && E.allowed(st, "village")) for (let i = 0; i < st.b.N; i++)
-    if (st.b.dist(su.i, i) <= 2 && !st.water[i] && own[i] !== 1 && !E.townAt(st, i)) siteT.add(i);
+  // with a builder picked, flag the best village sites the sea never reaches (engine drySites)
+  const siteT = new Set(mine && su.type === "builder" && !su.acted ? E.drySites(st, 0, su.i) : []);
   hits = [];
   // move rings on tiles with a house or building are drawn last, over the sprites (tester 11-02: a tower hid its ring)
   const lateRings = [];
@@ -3839,10 +3862,11 @@ function panel() {
         buttons.push(["Wall +1", E.wallCost(st, 0) + " stone", () => act({ kind: "wall", unit: su.id }), E.wallBlock(st, su)]);
         // founding on land the sea takes soon: say so once (tester: villages founded on turns 1-7 drowned at the turn
         // 15 and 19 rises; the rival builds high)
-        const soon = !st.water[su.i] && st.h[su.i] + st.wall[su.i] <= E.finalSea(st) && st.cfg.rises[st.h[su.i] + st.wall[su.i] - 1] >= st.turn;
-        const floodsOn = soon ? st.cfg.rises[st.h[su.i] + st.wall[su.i] - 1] : 0;
+        // the same flood model as the dry-site flags (engine floodSet: a low tile ringed by high land stays dry)
+        const floodsOn = E.floodsOnTurn(st, su.i), soon = floodsOn > 0;
         // any village the sea will take before the end, not only soon (tester 11-02: villages founded on turns 1-7 drowned
         // on turn 15 with no warning; the rival wins by building high and walling early)
+        if (!soon && E.drySites(st, 0, su.i).length) tip("flags", "Flags", "Flags mark the best village spots near this builder. The sea never reaches them.");
         if (soon && !E.foundBlock(st, su)) tip("lowVillage", "Low ground", "A village here drowns at the end of turn " + floodsOn + ". Found on high ground, or wall it as high as the sea goes (" + E.finalSea(st) + ").");
         buttons.push(["Village", E.foundCost(st, 0, su.i) + " food" + (floodsOn ? ", floods turn " + floodsOn : ", uses builder"), () => act({ kind: "found", unit: su.id }), E.foundBlock(st, su)]);
         for (const type of E.buildsFor(st, su)) {
@@ -4774,7 +4798,7 @@ function rulesCard(first) {
     pic("town", "Your land", LAND_RULE) +
     pic("sea", "The sea rises", "On set turns the sea climbs one level. Low land drowns with everything on it. Striped tiles go next.") +
     pic("wall", "Walls", "A builder walls the tile it stands on. Each level keeps it dry one rise longer.") +
-    pic("pieces", "Pieces", "An empty capital or village trains Builders and Spears. A builder on a flag spot founds a village and is used up.") +
+    pic("pieces", "Pieces", "An empty capital or village trains Builders and Spears. Pick a builder: flags mark village spots the sea never reaches. It founds a village where it stands and is used up.") +
     pic("fight", "Fights", "Pick a spear and tap a rival piece next to it to see the hit, then press Attack. The attacker hits first. Hurt pieces hit softer.") +
     pic("win", "Other ways to win", "Take the rival's capital with a spear; a capital the sea drowns is only lost land. Some islands have a peak: hold it to win."),
     first ? "Set sail" : "Back", () => {});
@@ -4792,7 +4816,7 @@ function help() {
     (has("trade") ? pic("trade", "Trade", "At any village, once a turn: " + E.tradeRate(st, 0) + " food for 1 stone, or " + E.tradeRate(st, 0) + " stone for 1 food.") : "") +
     (has("tech") ? pic("rank", "Letters", "At your capital, open one letter a turn: Sea (walls, then docks" + (E.allowed(st, "boat") ? " and boats" : "") + "), War (spears" + (E.allowed(st, "archer") ? ", then archers" : "") + "), Land (food, then towns). The second of each needs the first. Each opened makes the next cost " + E.POWER.tech.rise.food + " food and " + E.POWER.tech.rise.stone + " stone more.") : "") +
     (has("town") ? pic("town", "Towns", "Grow a village: " + E.growCost(st, 0).food + " food, " + E.growCost(st, 0).stone + " stone. Border reaches 2 tiles.") : "") +
-    pic("pieces", has("sapper") ? "Builder, Spear, Breaker" : "Builder and Spear", "Builders build. Spears fight and take villages. A village next to another costs " + E.NEAR_VILLAGE_EXTRA + " food more." + (has("sapper") ? " Breakers break walls." : "")) +
+    pic("pieces", has("sapper") ? "Builder, Spear, Breaker" : "Builder and Spear", "Builders build; with one picked, flags mark village spots the sea never reaches. Spears fight and take villages. A village next to another costs " + E.NEAR_VILLAGE_EXTRA + " food more." + (has("sapper") ? " Breakers break walls." : "")) +
     pic("fight", "Fights", "Hit first. High ground +2. Hurt pieces hit softer. Home village -" + E.guardOf(st, 0) + " damage. Kill a village's defender to take the village.") +
     pic("rank", "Ranks", "2 kills: Veteran. 4: Champion, moves 2. Or Drill a spear in a village: " + E.DRILL_COST[1].food + " food + " + E.DRILL_COST[1].stone + " stone, then " + E.DRILL_COST[2].food + " + " + E.DRILL_COST[2].stone + ". Rest: " + E.REST_COST + " food, +" + E.REST_HEAL + " health, +" + E.HOME_HEAL + " at home.") +
     (island.perk ? pic("win", island.clan.replace(/^the /, "The ") + ": " + island.perk.name, island.perk.text) : "") +
