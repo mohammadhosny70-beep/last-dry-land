@@ -1298,6 +1298,7 @@ function newGame(island, difficulty = "normal", seed = Math.floor(Math.random() 
   st.hold = [0, 0];
   const inc = income(st, 0);
   st.players[0].food += inc.food; st.players[0].stone += inc.stone;
+  if (st.cfg.solo) st.turnStart = soloSnap(st);
   return st;
 }
 
@@ -1593,12 +1594,27 @@ function braceBlock(st, u) {
 }
 // First Landing: what the lesson still needs before the turn may end: the raider gone, the first wall up, and no rise
 // this turn that would drown the house. A piece of yours other than a builder in the house keeps the builder out, so it opens
+// First Landing can't be lost (MO 11-09). The sea waits until the house has its first wall, and whenever it would drown the
+// house; after 3 such waits that rise is dropped, so a builder cut off from the house can't leave the island unfinished for ever.
+// If it would take one of your pieces the turn is replayed once ("retry"); after that the piece goes, which never ends the match.
+// Ordinary low land still goes under: that is the lesson.
+function soloRise(st) {
+  const home = st.capitals[0], next = floodSet(st, st.sea + 1);
+  if (st.wall[home] === 0) return "hold";
+  if (next.has(home)) return (st.seaWaits || 0) < 3 ? "hold" : "drop";
+  return st.turnStart && st.retriedTurn !== st.turn && st.units.some(u => u.owner === 0 && next.has(u.i)) ? "retry" : "";
+}
+const soloSnap = st => JSON.stringify({ turn: st.turn, sea: st.sea, cur: st.cur, water: st.water, wall: st.wall, bld: st.bld, units: st.units, towns: st.towns, players: st.players, lastHit: st.lastHit, trained: st.trained, traded: st.traded, learned: st.learned });
 function soloLacks(st) {
   const home = st.capitals[0];
   if (!st.cfg.solo || home < 0) return false;
   const inHouse = unitAt(st, home);
   if (inHouse && inHouse.owner === 0 && inHouse.type !== "builder") return false;
-  const drowns = turnsToRise(st) === 0 && st.h[home] + st.wall[home] <= st.sea + 1;
+  return soloNeeds(st);
+}
+// the lesson's own steps, with no way round them: parking a spear in the house does not count as doing one
+function soloNeeds(st) {
+  const home = st.capitals[0], drowns = turnsToRise(st) === 0 && st.h[home] + st.wall[home] <= st.sea + 1;
   return st.wall[home] === 0 || drowns || st.units.some(x => x.owner === 1);
 }
 // End turn is shut only while what the lesson needs can still be done this turn; otherwise the player would be stuck
@@ -1613,7 +1629,7 @@ function soloEndLocked(st) {
     for (const u of s.units.filter(x => x.owner === 0)) {
       const acts = [...moveTargets(s, u).map(to => ({ kind: "move", unit: u.id, to })), ...attackTargets(s, u).map(t => ({ kind: "attack", unit: u.id, target: t.id }))];
       if (can(u, "build") && !wallBlock(s, u)) acts.push({ kind: "wall", unit: u.id });
-      for (const a of acts) { const c = cloneState(s); if (apply(c, a) && !c.over && (!soloLacks(c) || fixable(c))) return true; }
+      for (const a of acts) { const c = cloneState(s); if (apply(c, a) && !c.over && (!soloNeeds(c) || fixable(c))) return true; }
     }
     return false;
   };
@@ -1964,9 +1980,19 @@ function endTurn(st) {
   st.trained = {}; st.traded = {}; st.learned = false;
   if (p === 1) {
     if (st.cfg.rises.includes(st.turn)) {
-      st.sea++;
-      st.events.push({ type: "rise", sea: st.sea });
-      applyFlood(st);
+      const held = st.cfg.solo ? soloRise(st) : "";
+      if (held === "retry") { const turn = st.turn; Object.assign(st, JSON.parse(st.turnStart)); st.retriedTurn = turn; st.events.push({ type: "retry" }); return; }
+      if (held === "drop") { st.cfg = { ...st.cfg, rises: st.cfg.rises.filter(x => x !== st.turn) }; st.seaWaits = 0; }
+      else if (held === "hold") {
+        // everything still to come moves one turn later
+        if (st.wall[st.capitals[0]] > 0) st.seaWaits = (st.seaWaits || 0) + 1;
+        const c = st.cfg, t = st.turn;
+        st.cfg = { ...c, rises: c.rises.map(x => (x >= t ? x + 1 : x)), lastTurn: c.lastTurn + 1, lateRaiders: (c.lateRaiders || []).map(l => (l.turn > t ? { ...l, turn: l.turn + 1 } : l)) };
+      } else {
+        st.sea++;
+        st.events.push({ type: "rise", sea: st.sea });
+        applyFlood(st);
+      }
     }
     if (!st.over && st.storm && st.turn >= st.storm.hits) stormHits(st);
     if (!st.over && st.turn >= st.cfg.lastTurn) { finish(st); return; }
@@ -1996,6 +2022,7 @@ function endTurn(st) {
     u.resting = false;
     u.moved = u.acted = false; u.rested = true;
   }
+  if (st.cfg.solo && st.cur === 0) st.turnStart = soloSnap(st);
 }
 
 function gainKill(st, u) {
@@ -2548,6 +2575,7 @@ function lookAhead(st, p, opts) {
 
 function aiNextAction(st, p) {
   if (st.over || st.cur !== p) return null;
+  if (st.cfg.solo) return null; // First Landing: a raider only stands there to be fought, it can never cost the player the island
   if (letterDue(st, p)) { const ln = chooseLearn(st, p); if (ln) return ln; }
   const tr = chooseTrain(st, p);
   if (tr) return tr;
@@ -4304,7 +4332,7 @@ function panel() {
   }
   const su = sel && sel.unit ? E.unitById(st, sel.unit) : null;
   if (st.over) html = line('<span class="name">Match over</span>', "", "");
-  else if (st.cur !== 0 || busy) html = line('<span class="name">The rival moves</span>', "", "");
+  else if (st.cur !== 0 || busy) html = $("hint").hidden ? line('<span class="name">The rival moves</span>', "", "") : "";
   else if (su) {
     const title = piecePic(su.type, su.owner) + '<span class="name">' + (su.rank ? E.RANK_NAMES[su.rank] + " " : "") + NAMES[su.type] + "</span>";
     let sub = "";
@@ -4493,6 +4521,12 @@ const TOO_FAR = "Too far this turn. Press End turn.";
 // time, so it is right whatever the player has clicked. Order: raider first, then the wall this turn needs, then End turn.
 // target = the tile to ring, button = the action to light up, end = End turn is the next thing to press
 function landingLine() {
+  const line = landingStep();
+  // until the first wall is up the hint says only this (MO 11-09); the rings and the glow still show where to click
+  if (!st.over && st.wall[capital()] === 0) line.t = "Wall your house";
+  return line;
+}
+function landingStep() {
   if (st.over) return { t: "" };
   if (st.cur !== 0 || busy) return { t: "Watch the sea." };
   if (tooFar()) return { t: TOO_FAR, end: true };
@@ -4509,7 +4543,21 @@ function landingLine() {
       if (step >= 0) return { t: "Walk your Spear next to the raider. Tap the ringed tile.", target: step };
     }
   }
-  const b = myBuilders()[0], need = st.turn === 1 ? 1 : 2;
+  const b = myBuilders()[0], need = st.turn === 1 ? 1 : 2, squatter = E.unitAt(st, cap);
+  // boxed in at the end of a row by your own piece: lead that piece aside
+  if (b && st.wall[cap] < need && b.i !== cap && !b.moved && !E.moveTargets(st, b).length) {
+    const block = st.units.find(u => u.owner === 0 && u.id !== b.id && !u.moved && st.b.dist(u.i, b.i) === 1 && E.moveTargets(st, u).length);
+    if (block) {
+      if (!su || su.id !== block.id) return { t: "Your Spear is in the way. Tap it.", target: block.i };
+      return { t: "Walk your Spear aside. Tap the ringed tile.", target: E.moveTargets(st, block).reduce((x, i) => (st.b.dist(i, b.i) > st.b.dist(x, b.i) ? i : x)) };
+    }
+  }
+  // your own piece in the house keeps the builder out: lead it out first
+  if (b && st.wall[cap] < need && squatter && squatter.owner === 0 && squatter.id !== b.id && !squatter.moved) {
+    if (!su || su.id !== squatter.id) return { t: "Your Spear is in the way. Tap it.", target: squatter.i };
+    const out = E.moveTargets(st, squatter)[0];
+    if (out !== undefined) return { t: "Walk your Spear out of the house. Tap the ringed tile.", target: out };
+  }
   if (b && st.wall[cap] < need && st.players[0].stone >= E.wallCost(st, 0)) {
     const lead = st.turn === 1 ? "The sea is coming and your house is low. " : "The sea rises again soon. ";
     if (b.i === cap && !b.acted) {
@@ -4586,6 +4634,16 @@ function endCoach() {
 }
 // one-off tips: the first time a newer rule becomes useful, say so once (the ? button gets a dot)
 let tipNow = null;
+// the bottom line shows one message at a time; timed messages wait in line and go first when their turn comes (MO 11-09)
+let msgNow = null, msgTimer = 0, msgQueue = [];
+function nextBottom() {
+  clearTimeout(msgTimer);
+  msgNow = msgQueue.shift() || null;
+  if (msgNow) msgTimer = setTimeout(nextBottom, msgNow.ms);
+  if (st) coachUpdate();
+}
+function sayBottom(h, t, ms = 3000) { msgQueue.push({ h, t, ms }); if (!msgNow) setTimeout(() => { if (!msgNow) nextBottom(); }, 0); }
+function clearBottom() { clearTimeout(msgTimer); msgNow = null; msgQueue = []; }
 function tip(id, h, t) {
   if (coach !== null || tipNow || save.tipsSeen[id]) return;
   tipNow = { id, h, t };
@@ -4650,14 +4708,16 @@ function coachUpdate() {
     }
   }
   // urgent warnings (your capital floods or stands open) come before tips; tips before the other notes
-  const sit = situation(), c = coach !== null && COACH[coach] && !(COACH[coach].wait && COACH[coach].wait()) ? COACH[coach] : null, show = c || (sit && sit.urgent ? sit : tipNow || sit);
+  const sit = situation(), c = coach !== null && COACH[coach] && !(COACH[coach].wait && COACH[coach].wait()) ? COACH[coach] : null, show = msgNow || c || (sit && sit.urgent ? sit : tipNow || sit);
   $("hint").hidden = !show || !st || st.over;
   // the first island can't be left without instructions
   $("hintX").hidden = coachSet === "landing" && coach !== null;
-  const withNote = show && !c && show !== rivalNote && rivalNote && st && rivalNote.turn === st.turn && st.cur === 0 && !busy;
-  if (show) $("hintTxt").innerHTML = clickWord("<b>" + show.h + "</b>" + show.t + (withNote ? "<br><b>" + rivalNote.h + "</b>" + rivalNote.t : ""));
+  // the rival's report waits its turn instead of joining another message
+  if (show && !c && show !== msgNow && show !== rivalNote && rivalNote && !rivalNote.queued && st && rivalNote.turn === st.turn && st.cur === 0 && !busy) { rivalNote.queued = true; sayBottom(rivalNote.h, rivalNote.t, 3400); }
+  if (show) $("hintTxt").innerHTML = clickWord("<b>" + show.h + "</b>" + show.t);
 }
 $("hintX").addEventListener("click", () => {
+  if (msgNow) { nextBottom(); return; }
   if (coach !== null) endCoach(); else if (tipNow) { tipNow = null; coachUpdate(); } else quietTurn = st.turn;
   render();
 });
@@ -4725,6 +4785,8 @@ async function playEvents() {
       toast("Storm: " + e.tiles.length + " tiles gone" + (mine ? ", you lost " + mine + " village" + (mine > 1 ? "s" : "") : "") + (drowned ? ", " + drowned + " of your pieces drowned" : "") +
         (capWorn ? ", your capital's wall lost a level" : myWorn.length ? ", " + myWorn.length + " of your walls lost a level" : ""), 3400, "sea", mine + drowned + myWorn.length > 0);
       await sleep(900);
+    } else if (e.type === "retry") {
+      sel = null; aim = null; sfx.deny(); sayBottom("", "The sea took it. Try again", 3000); render();
     } else if (e.type === "flood") { sfx.rise(); toast("Sea broke in: " + e.tiles.length + " tiles gone", 2600, "sea"); }
     else if (e.type === "heal") popup(e.at, "+" + e.n, "#9fe08c");
     else if (e.type === "disband") { sfx.train(); popup(e.at, "sold +" + e.back.food + (e.back.stone ? " +" + e.back.stone : ""), "#f3e6c8"); }
@@ -5269,7 +5331,7 @@ function startIsland(id, m = "journey", seed) {
   island = modeIsland(islandById(id), m);
   applyLook(island);
   st = E.newGame(island, m === "daily" ? "normal" : save.difficulty, seed, m === "journey" ? save.keepsakes : []);
-  rise = null; waterLevel = null; hideFlood = null;
+  rise = null; waterLevel = null; hideFlood = null; clearBottom();
   sel = null; aim = null; busy = false; cutShown = false; strandShown = false; view.z = 1; view.x = view.y = 0; resetThoughts();
   $("chart").hidden = true; $("app").hidden = false;
   hud(); layout(); focusHome(); render(); setSea(1);
@@ -5286,7 +5348,7 @@ function resumeMatch() {
   applyLook(island);
   st = E.thaw(m.st);
   st.cfg.noTrain = islandById(m.island).train === false;
-  rise = null; waterLevel = null; hideFlood = null;
+  rise = null; waterLevel = null; hideFlood = null; clearBottom();
   sel = null; aim = null; busy = false; cutShown = false; view.z = 1; view.x = view.y = 0; resetThoughts();
   $("chart").hidden = true; $("app").hidden = false;
   coach = null;
