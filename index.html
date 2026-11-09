@@ -401,7 +401,30 @@ html{font-synthesis:none}
   #info{order:1} #actions{order:2} #hint{order:3;min-height:0} #sideNote{order:4} .bottom{order:5}
   #hint[hidden]{display:none!important}
 }
-@media (min-width:760px) and (min-aspect-ratio:1/1){#endTurn.ready{animation:none;box-shadow:none;color:#ffd34d;filter:drop-shadow(0 0 6px rgba(255,211,77,.85))}}
+/* ---- PC (11-09, Steam): a full-width top bar over the board and panel, as in Polytopia and Civilization on PC.
+   The interface scales up with the window so it stays readable on 1080p and 1440p; the board already fills what is left. ---- */
+#keys{display:none}
+@media (min-width:760px) and (min-aspect-ratio:1/1){
+  :root{--pcZoom:1;--pcPanel:300px}
+  #app{grid-template-columns:minmax(0,1fr) var(--pcPanel);grid-template-rows:auto minmax(0,1fr);grid-template-areas:"hud hud" "board panel"}
+  #hud{display:flex;align-items:center;justify-content:space-between;gap:28px;padding:8px 18px 11px;box-shadow:inset 0 -3px 0 var(--woodDark)}
+  #hud .row{flex-wrap:nowrap;gap:24px;min-width:0}
+  #hud .row.res{font-size:19px}
+  #turn{font-size:25px}
+  #tide{white-space:nowrap;font-size:17px;gap:10px}
+  .pips i{width:11px;height:15px}
+  #panel{box-shadow:inset 3px 0 0 var(--woodDark);padding-top:14px}
+  #hud,#panel,#chartBar,#overlay .card,#menu,.zoom{zoom:var(--pcZoom)}
+  .chartSvg{max-width:none}
+  /* the glow follows the drawn loop, not the button's square box */
+  #endTurn.ready{animation:none;box-shadow:none;color:#ffd34d;filter:drop-shadow(0 0 6px rgba(255,211,77,.85))}
+  #chart{background-color:#2b1f14;background-image:repeating-linear-gradient(92deg,rgba(255,255,255,.025) 0 2px,transparent 2px 9px,rgba(0,0,0,.08) 9px 10px,transparent 10px 23px)}
+}
+@media (min-width:760px) and (min-aspect-ratio:1/1) and (hover:hover) and (pointer:fine){
+  #keys{display:block;order:6;margin-top:6px;text-align:center;font-size:13px;opacity:.65;flex:none}
+}
+@media (min-width:1500px) and (min-height:900px) and (min-aspect-ratio:1/1){:root{--pcZoom:1.3;--pcPanel:390px}}
+@media (min-width:2200px) and (min-height:1300px) and (min-aspect-ratio:1/1){:root{--pcZoom:1.75;--pcPanel:525px}}
 </style>
 
 <div id="chart" hidden><div id="chartMap"></div><div id="chartBar" class="wood"><span id="chartNote"></span><button id="rulesBtn" type="button">Rules</button><button id="modesBtn" type="button">Ways to play</button><button id="resumeBtn" type="button" hidden>Continue</button></div></div>
@@ -421,6 +444,7 @@ html{font-synthesis:none}
     <div id="info"></div>
     <div id="actions"></div>
     <div id="sideNote"></div>
+    <div id="keys">Enter end turn &middot; Tab next piece &middot; Esc cancel</div>
     <div class="bottom"><span id="status"></span><button id="endTurn" type="button" aria-label="End turn"><svg width="30" height="30" viewBox="0 0 28 28" aria-hidden="true"><path d="M6 14l6 6 10-12" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>End turn</span></button></div>
   </footer>
 </div>
@@ -3266,6 +3290,10 @@ const store = {
 // phones: the board fills the screen and the top line and tray float over it, so the board is
 // fitted into the part between them (T and B) while the canvas covers everything
 const OVERLAY = window.matchMedia("(max-width:759px), (max-aspect-ratio:999/1000)");
+// a mouse: the words say click, tiles answer to hover, keys work (phones never take this path)
+const MOUSE = window.matchMedia("(hover:hover) and (pointer:fine)");
+const clickWord = s => MOUSE.matches ? String(s).replace(/\bTap\b/g, "Click").replace(/\btapping\b/g, "clicking").replace(/\btap\b/g, "click") : s;
+let hoverTile = -1;
 function insets() {
   const T = OVERLAY.matches ? $("hud").offsetHeight : 0, B = OVERLAY.matches ? $("panel").offsetHeight : 0;
   document.documentElement.style.setProperty("--hudH", T + "px");
@@ -3317,6 +3345,8 @@ const TAP_SIZE = 34;
 // the sea rises a match of this island will have at this level (levels.js DIFFICULTY calmerSea drops the last)
 const risesText = (l, d) => { const r = l.rises.slice(0, l.rises.length - (DIFFICULTY[d] && DIFFICULTY[d].calmerSea && l.rises.length > 1 ? 1 : 0)); return "Rises " + r.join(" · "); };
 function focusHome() {
+  // wide screens open on the whole island: a mouse needs no close-up to hit a tile, and the land stays centred
+  if (!OVERLAY.matches && !st.cfg.solo) return;
   // big enough to tap, and the land at least as tall as the room between the top line and the row
   const cap = st.capitals[0], z = Math.min(MAX_ZOOM, Math.max(TAP_SIZE / geo.s, (geo.H - geo.T - geo.B) / (geo.bb - geo.bt)));
   // a small solo island (First Landing): centred on the island, zoomed so about 6 tiles fit across, not onto the
@@ -3820,6 +3850,12 @@ function draw() {
     const take = E.townAt(st, i) && E.townAt(st, i).owner === 1, col = take ? "#ff8a6a" : sailT.has(i) ? "#7fd6f2" : "rgba(255,255,255,.95)";
     ctx.beginPath(); ctx.ellipse(x, ty, s * .34, s * .34 * geo.tilt, 0, 0, Math.PI * 2);
     ctx.lineWidth = Math.max(2, s * .09); ctx.strokeStyle = col; ctx.stroke(); ell(x, ty, s * .1, s * .1 * geo.tilt, col);
+  }
+  // the mouse is over this tile: a pale outline, only while you can act
+  if (hoverTile >= 0 && !st.water[hoverTile] && MOUSE.matches && !busy && !st.over && st.cur === 0) {
+    const hh = hits.filter(x => x.i === hoverTile).pop();
+    if (hh) { ctx.save(); ctx.beginPath(); hh.pts.forEach((p, k) => k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath();
+      ctx.fillStyle = "rgba(255,255,255,.1)"; ctx.fill(); ctx.lineWidth = Math.max(2, geo.s * .05); ctx.strokeStyle = "rgba(255,246,214,.9)"; ctx.stroke(); ctx.restore(); }
   }
   drawSplashes();
   drawStorm();
@@ -4381,7 +4417,7 @@ function panel() {
   if (sellBtn && !st.cfg.solo) buttons.push(sellBtn);
   // an action this island does not have is not a button at all
   buttons = buttons.filter(x => x[3] !== "Not on this island");
-  info.innerHTML = html;
+  info.innerHTML = clickWord(html);
   // more than 3 buttons: they get the full width above the name (phones)
   $("panel").classList.toggle("many", buttons.length > 3);
   acts.innerHTML = "";
@@ -4391,6 +4427,7 @@ function panel() {
     b.type = "button";
     // always two lines: the name, then its cost (or why it can't be done)
     b.innerHTML = '<i class="ai">' + (ACT_IC[ACT_OF[label]] || "") + "</i><b>" + label + "</b>" + (blocked ? '<span class="why">' + blocked + "</span>" : cost ? "<span>" + costIcons(cost) + "</span>" : "");
+    b.innerHTML = clickWord(b.innerHTML);
     if (blocked) b.disabled = true;
     if (label === "Letters" && letterNew()) b.classList.add("ready");
     if (lessonLine() && lessonLine().button === label) b.classList.add("ready");
@@ -4618,7 +4655,7 @@ function coachUpdate() {
   // the first island can't be left without instructions
   $("hintX").hidden = coachSet === "landing" && coach !== null;
   const withNote = show && !c && show !== rivalNote && rivalNote && st && rivalNote.turn === st.turn && st.cur === 0 && !busy;
-  if (show) $("hintTxt").innerHTML = "<b>" + show.h + "</b>" + show.t + (withNote ? "<br><b>" + rivalNote.h + "</b>" + rivalNote.t : "");
+  if (show) $("hintTxt").innerHTML = clickWord("<b>" + show.h + "</b>" + show.t + (withNote ? "<br><b>" + rivalNote.h + "</b>" + rivalNote.t : ""));
 }
 $("hintX").addEventListener("click", () => {
   if (coach !== null) endCoach(); else if (tipNow) { tipNow = null; coachUpdate(); } else quietTurn = st.turn;
@@ -4828,6 +4865,14 @@ function tapAt(px, py) {
   const x = (px - view.x) / view.z, y = (py - view.y) / view.z;
   for (let k = hits.length - 1; k >= 0; k--) if (inPoly(x, y, hits[k].pts)) { onTile(hits[k].i); return; }
 }
+function tileAt(px, py) {
+  const x = (px - view.x) / view.z, y = (py - view.y) / view.z;
+  for (let k = hits.length - 1; k >= 0; k--) if (inPoly(x, y, hits[k].pts)) return hits[k].i;
+  return -1;
+}
+function setHover(i) {
+  if (i !== hoverTile) { hoverTile = i; if (st && !$("app").hidden) draw(); }
+}
 cv.addEventListener("pointerdown", ev => {
   try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
   ptrs.set(ev.pointerId, local(ev));
@@ -4838,7 +4883,7 @@ cv.addEventListener("pointerdown", ev => {
   }
 });
 cv.addEventListener("pointermove", ev => {
-  if (!ptrs.has(ev.pointerId) || !gest) return;
+  if (!ptrs.has(ev.pointerId) || !gest) { if (MOUSE.matches && !ptrs.size) { const [hx, hy] = local(ev); setHover(tileAt(hx, hy)); } return; }
   ptrs.set(ev.pointerId, local(ev));
   if (gest.kind === "pinch" && ptrs.size === 2) {
     const [a, b] = [...ptrs.values()], mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
@@ -4847,7 +4892,7 @@ cv.addEventListener("pointermove", ev => {
     clampView(); draw(); return;
   }
   const [x, y] = local(ev);
-  if (gest.kind === "tap" && Math.hypot(x - gest.sx, y - gest.sy) > 8) { gest.kind = "pan"; cv.classList.add("drag"); }
+  if (gest.kind === "tap" && Math.hypot(x - gest.sx, y - gest.sy) > 8) { gest.kind = "pan"; hoverTile = -1; cv.classList.add("drag"); }
   if (gest.kind === "pan") { view.x = gest.vx + x - gest.sx; view.y = gest.vy + y - gest.sy; clampView(); draw(); }
 });
 function pointerEnd(ev) {
@@ -4860,6 +4905,8 @@ function pointerEnd(ev) {
 }
 cv.addEventListener("pointerup", pointerEnd);
 cv.addEventListener("pointercancel", pointerEnd);
+cv.addEventListener("pointerleave", () => setHover(-1));
+cv.addEventListener("contextmenu", ev => { ev.preventDefault(); cancelPick(); });
 cv.addEventListener("wheel", ev => {
   ev.preventDefault();
   const [x, y] = local(ev);
@@ -4984,7 +5031,7 @@ async function rivalTurn() {
 // buttons: [[label, fn, "link"?], ...]; the first is the main one
 function showCard(html, label, fn) {
   const buttons = Array.isArray(label) ? label : [[label, fn]];
-  $("card").innerHTML = html + '<div class="cardBtns"></div>';
+  $("card").innerHTML = clickWord(html) + '<div class="cardBtns"></div>';
   $("card").classList.remove("plain");
   const row = $("card").querySelector(".cardBtns");
   buttons.forEach(([text, go, cls], k) => {
@@ -5193,7 +5240,7 @@ function showChart() {
 }
 let noteTimer = 0;
 function chartNote(msg) {
-  const n = $("chartNote"); n.textContent = msg;
+  const n = $("chartNote"); n.textContent = clickWord(msg);
   clearTimeout(noteTimer);
 }
 function briefing(id) {
@@ -5416,7 +5463,8 @@ function help() {
     (st.ground && st.ground.includes("marsh") ? pic("marsh", E.GROUND.marsh.name, E.GROUND.marsh.tip) : "") +
     (st.bld.some(b => b && b.owner === -1) || island.ruins ? pic("tower", island.ruins && island.ruins.every(r => r[0] === "dock") ? "Old docks" : "Old towers", "Grey flags: ruins nobody holds. Walk any piece onto one to take it.") : "") +
     pic("win", "Ways to win", "Most land after turn " + st.cfg.lastTurn + " wins. Or take the rival's capital with a spear (a capital the sea drowns is only lost land: the match goes on). " + (st.peak && st.peak.length ? "Or hold the peak (the gold dashed tiles) " + E.WIN.peakTurns + " of your turns in a row, from turn " + st.cfg.peakFrom + ": a piece of yours on a gold tile and none of theirs on any. It works the same for the rival." : "")) +
-    pic("map", "The map", "Drag to move. Pinch or + / - to zoom.") + CREDITS +
+    pic("map", "The map", MOUSE.matches ? "Drag to move. Scroll or + / - to zoom." : "Drag to move. Pinch or + / - to zoom.") +
+    (MOUSE.matches ? pic("map", "Keys", "Enter ends the turn. Tab picks your next piece. Esc or right-click cancels. Arrows or WASD move the map when zoomed in.") : "") + CREDITS +
     (island.coach ? '<button type="button" class="link" id="replayCoach">Tips again</button>' : ""), "Back", () => {});
   if (island.coach) $("replayCoach").addEventListener("click", () => { $("overlay").hidden = true; startCoach(true); });
 }
@@ -5462,6 +5510,33 @@ $("modesBtn").addEventListener("click", showModes);
 $("rulesBtn").addEventListener("click", () => rulesCard(false));
 muteIcon();
 $("chartBtn").addEventListener("click", leaveIsland);
+// ---------- keyboard and right-click: the mouse player's shortcuts ----------
+function cancelPick() {
+  if (busy || !st || st.over) return;
+  if (aim !== null) aim = null; else if (sel) sel = null; else return;
+  render();
+}
+// the next piece of yours that can still do something, in turn order
+function nextPiece() {
+  if (busy || st.over || st.cur !== 0) return;
+  const mine = st.units.filter(u => u.owner === 0 && !E.isDone(u));
+  if (!mine.length) return;
+  const k = sel && sel.unit ? mine.findIndex(u => u.id === sel.unit) : -1, u = mine[(k + 1) % mine.length];
+  sel = null; aim = null; onTile(u.i);
+  if (view.z > 1) { const [x, y] = center(u.i); view.x = geo.W / 2 - x * view.z; view.y = geo.H / 2 - y * view.z; clampView(); draw(); }
+}
+const PAN_KEYS = { ArrowLeft: [1, 0], ArrowRight: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1], a: [1, 0], d: [-1, 0], w: [0, 1], s: [0, -1] };
+document.addEventListener("keydown", ev => {
+  if (ev.ctrlKey || ev.metaKey || ev.altKey || !st || $("app").hidden || !$("overlay").hidden) return;
+  const k = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+  if (k === "Escape") { if (!$("menu").hidden) menuOpen(false); else cancelPick(); return; }
+  if (!$("menu").hidden) return;
+  if (k === "Enter") { ev.preventDefault(); if (!ev.repeat) $("endTurn").click(); return; }
+  if (k === "Tab" || k === " ") { ev.preventDefault(); if (!ev.repeat) nextPiece(); return; }
+  if (PAN_KEYS[k]) { ev.preventDefault(); view.x += PAN_KEYS[k][0] * 70; view.y += PAN_KEYS[k][1] * 70; clampView(); draw(); return; }
+  if (k === "+" || k === "=") zoomAt(geo.W / 2, geo.H / 2, view.z * 1.4);
+  if (k === "-" || k === "_") zoomAt(geo.W / 2, geo.H / 2, view.z / 1.4);
+});
 window.addEventListener("resize", () => { if (st && !$("app").hidden) { layout(); render(); } else if (!$("chart").hidden) showChart(); });
 showChart();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (st && !$("app").hidden) { layout(); render(); } else showChart(); });
