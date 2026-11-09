@@ -704,8 +704,9 @@ const ISLANDS = [
     ] },
     // MO 11-01: a small fight first. Your spear on the hill, a weak raider below it: one attack wins (high ground +2)
     start: { capital: [2, 2], units: [["builder", 2, 3], ["spear", 1, 3]] },
-    raiders: [["spear", 1, 4, 4]],
-    rises: [2, 4], lastTurn: 5,
+    // MO 11-09: the tutorial was confusing, so the sea comes first: wall, watch it hold, then the raider, then the second wall
+    raiders: [["spear", 1, 4, 4, 2]],
+    rises: [1, 3], lastTurn: 3,
     res: { food: 3, stone: 6 },
     unlocks: ["wall", "spear"],
     // MO 11-06: no training here; a spear trained in the house blocked the builder (no wall, so no End turn)
@@ -1243,7 +1244,11 @@ function newGame(island, difficulty = "normal", seed = Math.floor(Math.random() 
   // solo islands (First Landing, the opening tutorial): no rival on the board, only the sea
   if (!island.solo) { if (theirs) place(1, theirs, false); else place(1, mine, true); }
   // raiders (First Landing): lone rival pieces with no village, [type, r, c, hp]
-  for (const [type, r, c, hp] of island.raiders || []) { const u = addUnit(st, type, 1, at([r, c])); if (hp) u.hp = hp; }
+  // a fifth value: the turn it lands on (First Landing: after the first rise, so the sea comes first)
+  for (const [type, r, c, hp, turn] of island.raiders || []) {
+    if (turn) { (st.cfg.lateRaiders = st.cfg.lateRaiders || []).push({ type, i: at([r, c]), hp, turn }); continue; }
+    const u = addUnit(st, type, 1, at([r, c])); if (hp) u.hp = hp;
+  }
   // ground (rules.js GROUND): forest and marsh tiles, listed for one half of a mirrored map
   st.ground = new Array(b.N).fill(null);
   for (const [kind, list] of Object.entries(island.terrain || {})) for (const rc of list) {
@@ -1944,6 +1949,10 @@ function endTurn(st) {
     if (st.over) return; // a rise or storm that wiped a side out ends the match on this turn, not the next
     st.turn++;
     scheduleStorm(st);
+    for (const l of st.cfg.lateRaiders || []) if (l.turn === st.turn) {
+      const spot = !st.water[l.i] && !unitAt(st, l.i) ? l.i : st.b.nbrs(l.i).find(n => !st.water[n] && !unitAt(st, n));
+      if (spot !== undefined) { const u = addUnit(st, l.type, 1, spot); if (l.hp) u.hp = l.hp; }
+    }
   }
   if (st.over) return;
   st.cur = 1 - p;
@@ -3695,7 +3704,7 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = LOOK.bg; ctx.fillRect(0, 0, W, H);
   ctx.setTransform(dpr * view.z, 0, 0, dpr * view.z, dpr * view.x, dpr * view.y);
-  const WL = waterLevel !== null ? waterLevel : st.sea + 0.55;
+  const baseWL = waterLevel !== null ? waterLevel : st.sea + 0.55;
   const own = E.territory(st);
   const warn = E.turnsToRise(st) === null || st.over ? new Set() : E.floodSet(st, st.sea + 1);
   const tts = E.turnsToStorm(st);
@@ -3714,13 +3723,15 @@ function draw() {
   const ct = coachTarget();
   const rnd = mulberry(7);
   for (let r = 0; r < st.b.R; r++) for (let c = 0; c < st.b.C; c++) {
-    const i = st.b.idx(r, c), h = st.h[i], [x, y] = center(i);
-    if (wet(i)) {
+    const i = st.b.idx(r, c), h = st.h[i], [x, y] = center(i), WL = rise ? riseLevel(i) : baseWL;
+    if (wet(i) || (rise && hideFlood && hideFlood.has(i) && WL >= h + .02 && markFlooded(i))) {
       fp(face(x, y, 1, base, WL), LOOK.waterSide, LOOK.waterSide);
       fp(face(x, y, 2, base, WL), LOOK.waterSide2, LOOK.waterSide2);
       const col = h < 0 ? LOOK.deep : h === 0 ? LOOK.shallow : LOOK.drowned;
       const top = hexAt(x, y, WL);
       fp(top, col, col);
+      // the white crest where the wave has just arrived
+      if (rise && !REDUCED.matches) { const a = riseCrest(i); if (a > .02) { ctx.save(); ctx.beginPath(); top.forEach((p, k) => k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); ctx.fillStyle = "rgba(255,255,255," + (a * .42).toFixed(3) + ")"; ctx.fill(); ctx.restore(); } }
       if (h < 0 && rnd() < .3) {
         const wx = x + (rnd() - .5) * s * .8, wy = y - WL * ext + (rnd() - .5) * s * .4 * geo.tilt;
         ctx.beginPath(); ctx.moveTo(wx - s * .22, wy); ctx.quadraticCurveTo(wx, wy - s * .14, wx + s * .22, wy);
@@ -3810,6 +3821,7 @@ function draw() {
     ctx.beginPath(); ctx.ellipse(x, ty, s * .34, s * .34 * geo.tilt, 0, 0, Math.PI * 2);
     ctx.lineWidth = Math.max(2, s * .09); ctx.strokeStyle = col; ctx.stroke(); ell(x, ty, s * .1, s * .1 * geo.tilt, col);
   }
+  drawSplashes();
   drawStorm();
   drawBeast();
   drawTags();
@@ -4150,7 +4162,7 @@ function hud() {
   $("sMe").parentElement.style.visibility = st.cfg.solo ? "hidden" : ""; $("food").parentElement.style.visibility = st.cfg.solo ? "hidden" : "";
   // First Landing: End turn waits for the lesson, but only while the lesson can still be done this turn (engine)
   $("endTurn").disabled = busy || st.over || st.cur !== 0 || E.soloEndLocked(st);
-  $("endTurn").classList.toggle("ready", allDone() && !$("endTurn").disabled);
+  $("endTurn").classList.toggle("ready", (allDone() || !!(lessonLine() && lessonLine().end)) && !$("endTurn").disabled);
 }
 
 function floodsAt(i) {
@@ -4381,6 +4393,7 @@ function panel() {
     b.innerHTML = '<i class="ai">' + (ACT_IC[ACT_OF[label]] || "") + "</i><b>" + label + "</b>" + (blocked ? '<span class="why">' + blocked + "</span>" : cost ? "<span>" + costIcons(cost) + "</span>" : "");
     if (blocked) b.disabled = true;
     if (label === "Letters" && letterNew()) b.classList.add("ready");
+    if (lessonLine() && lessonLine().button === label) b.classList.add("ready");
     b.addEventListener("click", fn);
     acts.appendChild(b);
   }
@@ -4439,17 +4452,48 @@ const COACH_SETS = {};
 // the step can't be done this turn any more: End turn is open, so say that instead of pointing at something out of reach
 const tooFar = () => st.cur === 0 && E.soloLacks(st) && !E.soloEndLocked(st);
 const TOO_FAR = "Too far this turn. Press End turn.";
+// First Landing (MO 11-09: "instructions for every step till island secured"): one instruction read off the board each
+// time, so it is right whatever the player has clicked. Order: raider first, then the wall this turn needs, then End turn.
+// target = the tile to ring, button = the action to light up, end = End turn is the next thing to press
+function landingLine() {
+  if (st.over) return { t: "" };
+  if (st.cur !== 0 || busy) return { t: "Watch the sea." };
+  if (tooFar()) return { t: TOO_FAR, end: true };
+  const su = sel && sel.unit ? E.unitById(st, sel.unit) : null, cap = capital(), raider = st.units.find(u => u.owner === 1);
+  const toward = (u, goal) => E.moveTargets(st, u).reduce((b, i) => (b < 0 || st.b.dist(i, goal) < st.b.dist(b, goal) ? i : b), -1);
+  if (raider) {
+    const spear = st.units.find(u => u.owner === 0 && u.type === "spear");
+    if (spear) {
+      const lead = st.turn === 2 && st.sea >= 1 ? "Your wall held! But a raider landed. " : "";
+      if (!su || su.id !== spear.id) return { t: lead + "Tap your Spear.", target: spear.i };
+      if (aim === raider.i) return { t: "Press Attack.", button: "Attack" };
+      if (E.attackTargets(st, spear).some(x => x.id === raider.id)) return { t: "Tap the raider.", target: raider.i };
+      const step = toward(spear, raider.i);
+      if (step >= 0) return { t: "Walk your Spear next to the raider. Tap the ringed tile.", target: step };
+    }
+  }
+  const b = myBuilders()[0], need = st.turn === 1 ? 1 : 2;
+  if (b && st.wall[cap] < need && st.players[0].stone >= E.wallCost(st, 0)) {
+    const lead = st.turn === 1 ? "The sea is coming and your house is low. " : "The sea rises again soon. ";
+    if (b.i === cap && !b.acted) {
+      if (!su || su.id !== b.id) return { t: lead + "Tap your Builder in the house.", target: b.i };
+      return { t: need === 1 ? "Press Wall +1. A wall keeps the water out." : "Press Wall +1 again. Higher wall, drier house.", button: "Wall +1" };
+    }
+    if (b.i !== cap && !b.moved) {
+      if (!su || su.id !== b.id) return { t: lead + "Tap your Builder.", target: b.i };
+      const step = toward(b, cap);
+      if (step === cap) return { t: "Tap your house to move in.", target: cap };
+      if (step >= 0) return { t: "Walk towards your house. Tap the ringed tile.", target: step };
+    }
+  }
+  const held = st.wall[cap] >= need;
+  if (st.turn === 1) return { t: held ? "Press End turn and watch the sea." : "Press End turn.", end: true };
+  if (st.turn >= st.cfg.lastTurn) return { t: "Press End turn. One last wave, then the island is yours.", end: true };
+  return { t: "Press End turn. The next wave is coming.", end: true };
+}
+const lessonLine = () => (coachSet === "landing" && coach !== null && st && !st.over ? landingLine() : null);
 COACH_SETS.landing = [
-  { h: "", get t() { return tooFar() ? TOO_FAR : "A raider landed! Tap your Spear."; }, target: () => (st.units.find(u => u.owner === 0 && u.type === "spear") || {}).i,
-    done: () => !st.units.some(u => u.owner === 1) || (sel && sel.unit && st.units.some(u => u.id === sel.unit && u.owner === 0 && u.type === "spear")) },
-  { h: "", get t() { return tooFar() ? TOO_FAR : "Tap the raider, then press Attack."; }, target: () => (st.units.find(u => u.owner === 1) || {}).i, done: () => !st.units.some(u => u.owner === 1) },
-  { h: "", get t() { return tooFar() ? TOO_FAR : "Tap the Builder."; }, target: () => (myBuilders()[0] || {}).i, done: () => sel && sel.unit && myBuilders().some(u => u.id === sel.unit) },
-  { h: "", get t() { const u = E.unitAt(st, capital()); return u && u.owner === 0 && u.type !== "builder" ? "Your Spear is in the house. Move it out (or End turn), then bring the Builder in." : tooFar() ? TOO_FAR : "Tap the house to move in."; }, target: capital, done: () => myBuilders().some(u => u.i === capital()) },
-  { h: "", t: "Press Wall +1.", done: () => st.wall[capital()] > 0 },
-  { h: "", t: "Press End turn. The sea rises after your next turn.", done: () => st.turn >= 2 && st.cur === 0 && !busy },
-  { h: "", t: "Press End turn. Watch the sea.", done: () => st.sea >= 1 && st.cur === 0 && !busy },
-  { h: "", t: "Your wall held! Add one more before turn 4.", done: () => st.wall[capital()] >= 2 },
-  { h: "", t: "Press End turn until the sea stops.", ok: true },
+  { h: "", get t() { return landingLine().t; }, target: () => { const x = landingLine().target; return x === undefined ? -1 : x; }, done: () => st.over },
 ];
 COACH_SETS.basics = [
   { h: "Your builder", t: "Tap the piece with the hammer.",
@@ -4571,6 +4615,8 @@ function coachUpdate() {
   // urgent warnings (your capital floods or stands open) come before tips; tips before the other notes
   const sit = situation(), c = coach !== null && COACH[coach] && !(COACH[coach].wait && COACH[coach].wait()) ? COACH[coach] : null, show = c || (sit && sit.urgent ? sit : tipNow || sit);
   $("hint").hidden = !show || !st || st.over;
+  // the first island can't be left without instructions
+  $("hintX").hidden = coachSet === "landing" && coach !== null;
   const withNote = show && !c && show !== rivalNote && rivalNote && st && rivalNote.turn === st.turn && st.cur === 0 && !busy;
   if (show) $("hintTxt").innerHTML = "<b>" + show.h + "</b>" + show.t + (withNote ? "<br><b>" + rivalNote.h + "</b>" + rivalNote.t : "");
 }
@@ -4625,7 +4671,6 @@ async function playEvents() {
     if (e.type === "rise") {
       const fl = evs[k + 1] && evs[k + 1].type === "flood" ? evs[k + 1] : null;
       sfx.rise(); setSea(1 + e.sea);
-      if (!REDUCED.matches) restartAnim($("board"), "shake");
       await animateRise(e.sea - 1 + .55, e.sea + .55, new Set(fl ? fl.tiles : []));
       // walls that kept the water out this rise (outside review: make a wall that works feel like it)
       for (let i = 0; i < st.b.N; i++) if (st.wall[i] > 0 && !st.water[i] && st.h[i] <= st.sea) popup(i, "held!", "#9fd6e6");
@@ -4666,15 +4711,55 @@ async function playEvents() {
     else if (e.type === "end") { render(); await sleep(e.reason === "tide" ? 900 : 1400); if (st.winner === 0) sfx.win(); else sfx.lose(); showEnd(e); }
   }
 }
+// the sea comes in as a wave from the open water towards the middle of the island: each tile rises when the wave reaches
+// it, surges a little past its level and settles; land goes under when the water passes its height (MO 11-09: was one flat
+// level sliding up, "robotic"). Display only.
+let rise = null;
+const RISE_SWEEP = 1.5, RISE_UP = .85, RISE_SETTLE = 1;
+function riseLevel(i) {
+  const tau = rise.t - rise.delay[i];
+  if (tau <= 0) return rise.from;
+  const up = Math.min(1, tau / RISE_UP), e = 1 - Math.pow(1 - up, 3);
+  // the surge dies away before the end, so the last frame is exactly the new level
+  const fade = Math.min(1, (rise.dur - rise.t) * 3), surge = REDUCED.matches ? 0 : .3 * Math.exp(-2.4 * tau) * Math.sin(6.5 * tau + (i % 5) * .5) * fade;
+  return rise.from + (rise.to - rise.from) * e + surge;
+}
+const riseCrest = i => { const tau = rise.t - rise.delay[i]; return tau <= 0 || tau >= RISE_UP ? 0 : .95 * Math.sin(Math.PI * tau / RISE_UP); };
+function markFlooded(i) { if (!(i in rise.hit)) rise.hit[i] = rise.t; return true; }
+// a tile going under: a ring of foam and a few drops thrown up
+function drawSplashes() {
+  if (!rise || REDUCED.matches) return;
+  const s = geo.s, L = .85;
+  for (const key in rise.hit) {
+    const i = +key, a = (rise.t - rise.hit[i]) / L;
+    if (a < 0 || a >= 1) continue;
+    const [x, y] = center(i), wy = y - riseLevel(i) * geo.ext, r = s * (.35 + .75 * a);
+    ctx.beginPath(); ctx.ellipse(x, wy, r, r * geo.tilt, 0, 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(1, s * .1 * (1 - a)); ctx.strokeStyle = "rgba(240,250,255," + (.9 * (1 - a)).toFixed(3) + ")"; ctx.stroke();
+    ctx.fillStyle = "rgba(240,250,255," + (.95 * (1 - a)).toFixed(3) + ")";
+    for (let d = 0; d < 7; d++) {
+      const ang = d / 7 * Math.PI * 2 + i, dist = s * .75 * a, dx = Math.cos(ang) * dist, dy = Math.sin(ang) * dist * geo.tilt - s * 1.1 * a * (1 - a) * 4 * .3;
+      ctx.beginPath(); ctx.arc(x + dx, wy + dy, Math.max(.8, s * .06 * (1 - a)), 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
 function animateRise(from, to, tiles) {
   return new Promise(res => {
-    hideFlood = tiles; const t0 = performance.now(), dur = 1500;
+    hideFlood = tiles;
+    // the wave starts at the tiles furthest from the middle of the land
+    const land = []; for (let i = 0; i < st.b.N; i++) if (st.h[i] >= 1) land.push(center(i));
+    const mx = land.reduce((a, p) => a + p[0], 0) / (land.length || 1), my = land.reduce((a, p) => a + p[1], 0) / (land.length || 1);
+    const far = []; for (let i = 0; i < st.b.N; i++) { const [x, y] = center(i); far.push(Math.hypot(x - mx, (y - my) / geo.tilt)); }
+    const max = Math.max(...far) || 1, sweep = REDUCED.matches ? 0 : RISE_SWEEP;
+    const dur = sweep + RISE_UP + (REDUCED.matches ? 0 : RISE_SETTLE), t0 = performance.now();
+    const mine = rise = { from, to, t: 0, dur, hit: {}, delay: far.map(d => (1 - d / max) * sweep) };
     const step = now => {
-      const k = Math.min(1, (now - t0) / dur), e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
-      waterLevel = from + (to - from) * e;
+      if (rise !== mine) { res(); return; } // a new match started while the water was moving
+      rise.t = Math.min(dur, (now - t0) / 1000);
+      waterLevel = from + (to - from) * Math.min(1, rise.t / dur); // the gulls and creatures ride on this
       draw();
-      if (k < 1) requestAnimationFrame(step);
-      else { waterLevel = null; hideFlood = null; render(); res(); }
+      if (rise.t < dur) requestAnimationFrame(step);
+      else { rise = null; waterLevel = null; hideFlood = null; render(); res(); }
     };
     requestAnimationFrame(step);
   });
@@ -5137,6 +5222,7 @@ function startIsland(id, m = "journey", seed) {
   island = modeIsland(islandById(id), m);
   applyLook(island);
   st = E.newGame(island, m === "daily" ? "normal" : save.difficulty, seed, m === "journey" ? save.keepsakes : []);
+  rise = null; waterLevel = null; hideFlood = null;
   sel = null; aim = null; busy = false; cutShown = false; strandShown = false; view.z = 1; view.x = view.y = 0; resetThoughts();
   $("chart").hidden = true; $("app").hidden = false;
   hud(); layout(); focusHome(); render(); setSea(1);
@@ -5153,6 +5239,7 @@ function resumeMatch() {
   applyLook(island);
   st = E.thaw(m.st);
   st.cfg.noTrain = islandById(m.island).train === false;
+  rise = null; waterLevel = null; hideFlood = null;
   sel = null; aim = null; busy = false; cutShown = false; view.z = 1; view.x = view.y = 0; resetThoughts();
   $("chart").hidden = true; $("app").hidden = false;
   coach = null;
