@@ -401,6 +401,7 @@ html{font-synthesis:none}
   #info{order:1} #actions{order:2} #hint{order:3;min-height:0} #sideNote{order:4} .bottom{order:5}
   #hint[hidden]{display:none!important}
 }
+@media (min-width:760px) and (min-aspect-ratio:1/1){#endTurn.ready{animation:none;box-shadow:none;color:#ffd34d;filter:drop-shadow(0 0 6px rgba(255,211,77,.85))}}
 </style>
 
 <div id="chart" hidden><div id="chartMap"></div><div id="chartBar" class="wood"><span id="chartNote"></span><button id="rulesBtn" type="button">Rules</button><button id="modesBtn" type="button">Ways to play</button><button id="resumeBtn" type="button" hidden>Continue</button></div></div>
@@ -662,6 +663,8 @@ __m.levels = (function () {
 //   rises       turns at the end of which the sea climbs one level; lastTurn ends the match
 //   res         starting food and stone for each side
 //   terrain     special ground (rules.js GROUND): {forest: [[r, c], ...], marsh: [...]}, mirrored like start
+//   free        true: playable without the full game (MO 11-06: First Landing, Lowmere, Saltmarsh)
+//   train       false: no village trains pieces on this island (First Landing)
 //   unlocks     ids from rules.ALL_UNLOCKS that this island allows
 //   given       unlock ids open from the start here, without the letter that opens them elsewhere
 //   rival       the computer's style: weights around 1 (attack, expand, walls)
@@ -687,7 +690,7 @@ const ISLANDS = [
   // goes straight into. No rival, no fighting: one builder, one capital, a sea that rises every 2 turns. Wall the
   // capital once and it stays dry. Not on the chart, never in Skirmish or Daily (ready: false)
   {
-    id: "landing", name: "First Landing", clan: "the sea", chart: { x: 10, y: 92 }, ready: false, solo: true,
+    id: "landing", name: "First Landing", free: true, clan: "the sea", chart: { x: 10, y: 92 }, ready: false, solo: true,
     story: { intro: "The water is coming. Keep your home dry.", win: "Your home stayed dry. The sea is rising everywhere." },
     // 11-01 v2 (second outside look: the first rise must pay off): the house sits low, so the very first rise
     // (end of turn 2) is held by the wall built on turn 1, and a second wall holds the rise on turn 4. Two rises, a
@@ -705,6 +708,8 @@ const ISLANDS = [
     rises: [2, 4], lastTurn: 5,
     res: { food: 3, stone: 6 },
     unlocks: ["wall", "spear"],
+    // MO 11-06: no training here; a spear trained in the house blocked the builder (no wall, so no End turn)
+    train: false,
     rival: { attack: 1, expand: 1, walls: 1 },
     goals: [],
     coach: "landing",
@@ -713,7 +718,7 @@ const ISLANDS = [
       scenery: { 1: "crops", 2: "crops", 3: "rocks", 4: "rocks", 5: "snow" } },
   },
   {
-    id: "lowmere", name: "Lowmere", clan: "the Reedfolk", chart: { x: 18, y: 84 }, ready: true,
+    id: "lowmere", name: "Lowmere", free: true, clan: "the Reedfolk", chart: { x: 18, y: 84 }, ready: true,
     // atmosphere only (MO 11-03): now and then a seal surfaces, looks about and barks; no effect on play
     creature: "seal",
     story: {
@@ -746,7 +751,7 @@ const ISLANDS = [
       scenery: { 1: "crops", 2: "crops", 3: "rocks", 4: "rocks", 5: "snow" } },
   },
   {
-    id: "saltmarsh", name: "Saltmarsh", clan: "the Gull Clan", chart: { x: 40, y: 66 }, ready: true,
+    id: "saltmarsh", name: "Saltmarsh", free: true, clan: "the Gull Clan", chart: { x: 40, y: 66 }, ready: true,
     // atmosphere only (MO 11-03): now and then a flock of gulls crosses the sky, calling; no effect on play
     creature: "gulls",
     story: {
@@ -1189,6 +1194,8 @@ function newGame(island, difficulty = "normal", seed = Math.floor(Math.random() 
       // Endless (modes.js): the match only ends when you lose your last village
       endless: !!island.endless,
       solo: !!island.solo,
+      // islands with train: false (First Landing) train nothing
+      noTrain: island.train === false,
       // extra income each turn on top of villages and buildings (hard difficulty gives the rival some)
       bonus: [{ ...dif.youIncome }, { ...dif.rivalIncome }],
       rivalStyle: { ...island.rival },
@@ -1555,10 +1562,40 @@ function braceBlock(st, u) {
   if (st.players[u.owner].stone < braceCost(st, u.owner)) return "Needs " + braceCost(st, u.owner) + " stone";
   return "";
 }
+// First Landing: what the lesson still needs before the turn may end: the raider gone, the first wall up, and no rise
+// this turn that would drown the house. A piece of yours other than a builder in the house keeps the builder out, so it opens
+function soloLacks(st) {
+  const home = st.capitals[0];
+  if (!st.cfg.solo || home < 0) return false;
+  const inHouse = unitAt(st, home);
+  if (inHouse && inHouse.owner === 0 && inHouse.type !== "builder") return false;
+  const drowns = turnsToRise(st) === 0 && st.h[home] + st.wall[home] <= st.sea + 1;
+  return st.wall[home] === 0 || drowns || st.units.some(x => x.owner === 1);
+}
+// End turn is shut only while what the lesson needs can still be done this turn; otherwise the player would be stuck
+// for good (MO 11-09: walled the wrong tile, or walked too far, and End turn never opened)
+function soloEndLocked(st) {
+  if (st.cur !== 0 || st.over || !soloLacks(st)) return false;
+  const seen = new Set();
+  const fixable = s => {
+    const key = JSON.stringify([s.wall, s.players[0].stone, s.units.map(u => [u.id, u.i, u.hp, u.moved, u.acted])]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    for (const u of s.units.filter(x => x.owner === 0)) {
+      const acts = [...moveTargets(s, u).map(to => ({ kind: "move", unit: u.id, to })), ...attackTargets(s, u).map(t => ({ kind: "attack", unit: u.id, target: t.id }))];
+      if (can(u, "build") && !wallBlock(s, u)) acts.push({ kind: "wall", unit: u.id });
+      for (const a of acts) { const c = cloneState(s); if (apply(c, a) && !c.over && (!soloLacks(c) || fixable(c))) return true; }
+    }
+    return false;
+  };
+  return fixable(st);
+}
 function wallBlock(st, u, at = u.i) {
   if (!allowed(st, "wall")) return "Not on this island";
   if (!can(u, "build") || u.acted) return "Done this turn";
   if (at !== u.i) return "Stand on the tile";
+  // First Landing teaches one wall, on the house; a wall elsewhere used up the builder and the stone (MO 11-09)
+  if (st.cfg.solo && u.owner === 0 && at !== st.capitals[0]) return "Only on the house";
   if (st.water[at] || territory(st)[at] !== u.owner) return "Not your land";
   if (st.wall[at] >= maxWall(st, u.owner)) return "Wall is full";
   if (st.players[u.owner].stone < wallCost(st, u.owner)) return "Needs " + wallCost(st, u.owner) + " stone";
@@ -1661,7 +1698,7 @@ function buildBlock(st, u, type) {
 // the buildings this island allows on the tile a builder stands on
 const buildsFor = (st, u) => Object.keys(BUILD).filter(type => allowed(st, type, u.owner) && BUILD[type].on(st.h[u.i]) && (!BUILD[type].coast || coastal(st, u.i)));
 // the pieces a village can train on this island
-const trainable = (st, p) => Object.keys(UNIT).filter(type => allowed(st, type, p));
+const trainable = (st, p) => st.cfg.noTrain ? [] : Object.keys(UNIT).filter(type => allowed(st, type, p));
 function sapTargets(st, u) {
   if (!can(u, "sap") || u.acted) return [];
   const own = territory(st);
@@ -1682,6 +1719,7 @@ function boatLaunch(st, town) {
 // what selling a piece gives back: half its price, rounded down
 const sellValue = (st, u) => { const k = unitCost(st, u.owner, u.type); return { food: Math.floor(k.food / 2), stone: Math.floor(k.stone / 2) }; };
 function trainBlock(st, town, type) {
+  if (st.cfg.noTrain) return "No training here";
   if (!allowed(st, type, town.owner)) return "Not on this island";
   if (town.owner !== st.cur) return "Not your village";
   if (st.trained[town.i]) return "Trained this turn";
@@ -1961,7 +1999,7 @@ function checkElimination(st) {
 
 // for the Letters card (letters in numbers)
 
-return { POWER, SAIL, SHIELD_GUARD, WOUND, GROUND, WIN, TECHS, BRANCHES, KEEPSAKES_ON, KEEPSAKES, UNIT, BUILD, RANK_KILLS, RANK_NAMES, MAX_WALL, WALL_COST, GROW_COST, TRADE_RATE, NEAR_VILLAGE_EXTRA, REST_HEAL, HOME_HEAL, REST_COST, VILLAGE_GUARD, DRILL_COST, STORM, starsFor, CAPITAL_GIVES, stat, cloneState, freeze, thaw, newGame, territory, floodSet, applyFlood, stormSet, income, cutOff, contested, score, turnsToRise, sailTargets, moveTargets, mayAttack, attackTargets, fight, braceBlock, wallBlock, foundBlock, floodsOnTurn, drySites, growBlock, tradeBlock, restBlock, drillBlock, buildBlock, sapTargets, boatLaunch, trainBlock, holdsPeak, learnBlock, apply, endTurn, can, typeFor, unitCost, buildCost, wallCost, maxWall, growCost, drillCost, restCost, tradeRate, guardOf, unitMove, atkOf, maxHp, hitOf, townCost, nearVillage, foundCost, restHeal, allowed, unitAt, townAt, unitById, isDone, turnsToStorm, inStorm, finalSea, coastal, blockaded, braceCost, buildsFor, trainable, sellValue, techCost, knows, techHere };
+return { POWER, SAIL, SHIELD_GUARD, WOUND, GROUND, WIN, TECHS, BRANCHES, KEEPSAKES_ON, KEEPSAKES, UNIT, BUILD, RANK_KILLS, RANK_NAMES, MAX_WALL, WALL_COST, GROW_COST, TRADE_RATE, NEAR_VILLAGE_EXTRA, REST_HEAL, HOME_HEAL, REST_COST, VILLAGE_GUARD, DRILL_COST, STORM, starsFor, CAPITAL_GIVES, stat, cloneState, freeze, thaw, newGame, territory, floodSet, applyFlood, stormSet, income, cutOff, contested, score, turnsToRise, sailTargets, moveTargets, mayAttack, attackTargets, fight, braceBlock, soloLacks, soloEndLocked, wallBlock, foundBlock, floodsOnTurn, drySites, growBlock, tradeBlock, restBlock, drillBlock, buildBlock, sapTargets, boatLaunch, trainBlock, holdsPeak, learnBlock, apply, endTurn, can, typeFor, unitCost, buildCost, wallCost, maxWall, growCost, drillCost, restCost, tradeRate, guardOf, unitMove, atkOf, maxHp, hitOf, townCost, nearVillage, foundCost, restHeal, allowed, unitAt, townAt, unitById, isDone, turnsToStorm, inStorm, finalSea, coastal, blockaded, braceCost, buildsFor, trainable, sellValue, techCost, knows, techHere };
 })();
 __m.ai = (function () {
 // Last Dry Land - computer rival. Each unit scores what it can do now (hand-set values below); on
@@ -2754,7 +2792,7 @@ const { ISLANDS } = __m.levels;
 const KEY = "ldl.save", VERSION = 1;
 
 function blank() {
-  return { v: VERSION, islands: {}, difficulty: "normal", coachDone: {}, tipsSeen: {}, modes: {}, lastWon: null, keepsakes: [], journeyDone: false };
+  return { v: VERSION, islands: {}, difficulty: "normal", coachDone: {}, tipsSeen: {}, modes: {}, lastWon: null, keepsakes: [], journeyDone: false, full: false };
 }
 const read = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 
@@ -2791,6 +2829,12 @@ function isOpen(save, id) {
   while (prev >= 0 && !ISLANDS[prev].ready) prev--;
   return k === 0 || (k > 0 && (prev < 0 || wonIsland(save, ISLANDS[prev].id)));
 }
+// the full game, one purchase (MO 11-06): islands marked free in levels.js (and Skirmish on them) need nothing; every
+// other island, the Daily Tide and Endless need save.full. A playtest build (OPEN_ALL) has everything.
+// open: pass false in tests to check the release rules from a playtest source tree
+const owns = () => true;
+const needsFull = (save, id, open = OPEN_ALL) => !owns(save, open) && !(ISLANDS.find(l => l.id === id) || {}).free;
+const modeNeedsFull = (save, m, open = OPEN_ALL) => !owns(save, open) && (m === "daily" || m === "endless");
 // keep the best result for an island
 // met: which extra goals this match reached (levels.js goals, in order); kept once reached (tester 11-03: the island
 // card showed "Keep your capital" unticked after a 2-star win, because only the star count was saved)
@@ -2803,7 +2847,113 @@ function recordResult(save, id, won, stars, met = []) {
   writeSave(save);
 }
 
-return { loadSave, writeSave, isOpen, recordResult, goalsMet, starsOn, wonIsland, OPEN_ALL };
+return { loadSave, writeSave, isOpen, recordResult, goalsMet, starsOn, wonIsland, OPEN_ALL, owns, needsFull, modeNeedsFull };
+})();
+__m.purchase = (function () {
+// purchase.js -- one non-consumable "full game" unlock with Restore, through cordova-plugin-purchase
+// (v13, window.CdvPurchase) in a Capacitor app; a clear message (or a Play link) in web builds.
+//
+// Came from: C:\GAME\echo\src\main.js ("Free part and the purchase gate"; counter has the same setup)
+// plus C:\GAME\cosmic-clicker\www\index.html lessons:
+//   - init guard: cosmic calls init from 'deviceready' AND a 1.5 s fallback timer; without the guard the
+//     second run doubled every approved/error handler (two finish() calls, two error toasts) -- v216 audit
+//   - Restore says what it found: "No purchase found" when nothing comes back, instead of silence (v216)
+//   - a cancelled payment shows nothing; other store errors show one short line
+//   - iOS and Android both: the platform comes from cordova.platformId
+//   - dev unlock (?all / ?debug=1) only on localhost / a private LAN host; on itch.io or a page opened
+//     from a downloaded copy it would be a free unlock (cosmic v213, counter/echo DEV_ALL)
+//
+// Install in the game:  npm i cordova-plugin-purchase && npx cap sync android
+// Play Console: create the in-app product with the same id as PRODUCT_ID (non-consumable / one-time).
+//
+// Use (ES module; for a single inline <script> like cosmic, delete the "export" keywords):
+//   import { initPurchase, buy, restore, IS_NATIVE, devUnlock } from './purchase.js';
+//   initPurchase({
+//     onUnlock: () => { save.full = true; persist(); closeGate(); },  // must be idempotent: Play re-reports owned items
+//     onPrice: price => { $('buyPrice').textContent = price; },        // localized price from the store, e.g. "$3.99"
+//     onNote: text => { $('gateNote').textContent = text; },           // short status line under the buttons
+//     isOwned: () => !!save.full,
+//   });
+//   $('btnBuy').onclick = buy;
+//   $('btnRestore').hidden = !IS_NATIVE;
+//   $('btnRestore').onclick = async () => { const b = $('btnRestore'); b.disabled = true; b.textContent = 'Checking...';
+//     b.textContent = await restore(); b.disabled = false; setTimeout(() => { b.textContent = 'Restore purchase'; }, 3000); };
+//   const owned = () => !!save.full || devUnlock();
+//
+// What to change per game: the constants below. Nothing else.
+const PRODUCT_ID = 'full_game';
+// Play listing, set when the app is live (web builds then link to it instead of saying "coming soon")
+const PLAY_URL = '';
+// URL switch that opens everything on a dev host only (counter/echo use ?all, cosmic ?debug=1)
+const DEV_PARAM = 'all';
+const TEXT = {
+  storeError: 'Store error. Try again.',
+  notReady: 'Store not ready. Try again.',
+  comingSoon: 'The full game is coming to Google Play.',
+  restored: 'Purchase restored',
+  none: 'No purchase found',
+  webRestore: 'Restore works inside the app',
+};
+
+const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+// trusted: localhost and private LAN ranges (phone playtests). Not trusted: itch.io, any public host,
+// and file:// (a downloaded copy has an empty hostname)
+const isDevHost = () => !IS_NATIVE && /^(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(location.hostname);
+const devUnlock = () => isDevHost() && new URLSearchParams(location.search).has(DEV_PARAM);
+
+let store = null, P = null, hooks = { onUnlock() {}, onPrice() {}, onNote() {}, isOwned: () => false }, initDone = false;
+
+function init() {
+  if (initDone || !window.CdvPurchase) return;   // the guard: deviceready and the fallback timer both land here
+  initDone = true;
+  P = window.CdvPurchase;
+  store = P.store;
+  const platform = window.cordova && window.cordova.platformId === 'ios' ? P.Platform.APPLE_APPSTORE : P.Platform.GOOGLE_PLAY;
+  store.register([{ id: PRODUCT_ID, type: P.ProductType.NON_CONSUMABLE, platform }]);
+  store.when()
+    .approved(t => { hooks.onUnlock(); t.finish(); })
+    .productUpdated(p => {
+      if (p.id !== PRODUCT_ID) return;
+      if (p.owned) hooks.onUnlock();
+      const price = p.pricing && p.pricing.price;
+      if (price) hooks.onPrice(price);
+    });
+  store.error(e => hooks.onNote(e && e.code === P.ErrorCode.PAYMENT_CANCELLED ? '' : TEXT.storeError));
+  store.initialize([platform]);
+}
+
+function initPurchase(h) {
+  hooks = { ...hooks, ...h };
+  if (!IS_NATIVE) return;
+  document.addEventListener('deviceready', init, false);
+  setTimeout(init, 1500);   // in case deviceready fired before this ran
+}
+
+function buy() {
+  hooks.onNote('');
+  if (IS_NATIVE) {
+    const p = store && store.get(PRODUCT_ID), offer = p && p.getOffer();
+    if (!offer) { hooks.onNote(TEXT.notReady); return; }
+    offer.order();
+    return;
+  }
+  if (devUnlock()) { hooks.onUnlock(); return; }
+  if (PLAY_URL) { window.open(PLAY_URL, '_blank', 'noopener'); return; }
+  hooks.onNote(TEXT.comingSoon);
+}
+
+// Resolves to the text to show. An owned purchase unlocks through productUpdated -> onUnlock, which can
+// land a moment after restorePurchases() returns, so wait up to 2 s before saying nothing was found.
+async function restore() {
+  if (!IS_NATIVE || !store) return TEXT.webRestore;
+  let err;
+  try { err = await store.restorePurchases(); } catch (e) { err = e; }
+  if (err) return TEXT.storeError;
+  for (let i = 0; i < 10 && !hooks.isOwned(); i++) await new Promise(r => setTimeout(r, 200));
+  return hooks.isOwned() ? TEXT.restored : TEXT.none;
+}
+
+return { initPurchase, buy, restore, PRODUCT_ID, PLAY_URL, IS_NATIVE, isDevHost, devUnlock };
 })();
 __m.chart = (function () {
 // Last Dry Land - the sea chart between matches: Grandmother's chart with every island, the
@@ -3068,7 +3218,8 @@ function savedMatch() {
 }
 const { sfx, isMuted, setMuted, setSea, setRain } = __m.audio;
 const { ISLANDS, islandById, nextIsland, DIFFICULTY, GOALS, goalText, goalMet, starsFor, maxStars } = __m.levels;
-const { loadSave, writeSave, recordResult, starsOn, isOpen, wonIsland, goalsMet } = __m.save;
+const { loadSave, writeSave, recordResult, starsOn, isOpen, wonIsland, goalsMet, needsFull, modeNeedsFull } = __m.save;
+const { initPurchase, buy, restore, IS_NATIVE, devUnlock } = __m.purchase;
 const { renderChart, MORE_ISLANDS } = __m.chart;
 const { pickThought, noteThought } = __m.thoughts;
 const UNIT = E.UNIT;
@@ -3529,10 +3680,6 @@ function incomeBadge(x, y, text, col, paying) {
   ctx.fillStyle = col; ctx.font = Math.round(s * .36) + "px 'Patrick Hand', cursive"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillText(text, x, y + 1); ctx.restore();
 }
-function arrowDown(x, y) {
-  const s = geo.s;
-  fp([[x - s * .16, y - s * .4], [x + s * .16, y - s * .4], [x + s * .16, y - s * .12], [x + s * .3, y - s * .12], [x, y + s * .14], [x - s * .3, y - s * .12], [x - s * .16, y - s * .12]], "#ffd34d", LOOK.outline, 1.5);
-}
 function ring(x, y, color, w, f = .66) {
   ctx.beginPath(); ctx.ellipse(x, y, geo.s * f, geo.s * f * geo.tilt, 0, 0, Math.PI * 2);
   ctx.strokeStyle = color; ctx.lineWidth = w; ctx.stroke();
@@ -3631,7 +3778,7 @@ function draw() {
         scenery(LOOK.scenery[h], x, ty, h);
       }
       if (i === (su && su.i)) ring(x, ty, "#fff4c2", 2.5);
-      if (i === ct) { ring(x, ty, "#ffd34d", Math.max(3, s * .16), .8); arrowDown(x, ty - s * 1.25); }
+      if (i === ct) ring(x, ty, "#ffd34d", Math.max(3, s * .16), .8);
       if (siteT.has(i)) flag(x - s * .04, ty + s * .14 * geo.tilt);
       // a tile the picked piece can walk to: a white ring with a dot (red ring = a rival village it would take)
       if (moveT.has(i) && (E.townAt(st, i) || st.bld[i])) lateRings.push([x, ty, i]);
@@ -4001,11 +4148,9 @@ function hud() {
   $("sMe").textContent = E.score(st, 0); $("sFoe").textContent = E.score(st, 1);
   // First Landing has no rival and nothing that costs food: no land score against nobody, no food (tester)
   $("sMe").parentElement.style.visibility = st.cfg.solo ? "hidden" : ""; $("food").parentElement.style.visibility = st.cfg.solo ? "hidden" : "";
-  // First Landing: End turn waits until the house has its first wall (the lesson can't be skipped by accident)
-  // and whenever this turn's rise would drown the house, so the first island always ends in a win
-  const homeAt = st.capitals[0], homeDrowns = homeAt >= 0 && E.turnsToRise(st) === 0 && st.h[homeAt] + st.wall[homeAt] <= st.sea + 1;
-  $("endTurn").disabled = busy || st.over || st.cur !== 0 || (st.cfg.solo && (st.wall[homeAt] === 0 || homeDrowns || st.units.some(u => u.owner === 1)));
-  $("endTurn").classList.toggle("ready", allDone());
+  // First Landing: End turn waits for the lesson, but only while the lesson can still be done this turn (engine)
+  $("endTurn").disabled = busy || st.over || st.cur !== 0 || E.soloEndLocked(st);
+  $("endTurn").classList.toggle("ready", allDone() && !$("endTurn").disabled);
 }
 
 function floodsAt(i) {
@@ -4291,12 +4436,15 @@ function wheatSpot() {
 const COACH_SETS = {};
 // First Landing: one line at a time, walls only
 // one plain line each, in the only order that works (End turn waits for the first wall)
+// the step can't be done this turn any more: End turn is open, so say that instead of pointing at something out of reach
+const tooFar = () => st.cur === 0 && E.soloLacks(st) && !E.soloEndLocked(st);
+const TOO_FAR = "Too far this turn. Press End turn.";
 COACH_SETS.landing = [
-  { h: "", t: "A raider landed! Tap your Spear.", target: () => (st.units.find(u => u.owner === 0 && u.type === "spear") || {}).i,
+  { h: "", get t() { return tooFar() ? TOO_FAR : "A raider landed! Tap your Spear."; }, target: () => (st.units.find(u => u.owner === 0 && u.type === "spear") || {}).i,
     done: () => !st.units.some(u => u.owner === 1) || (sel && sel.unit && st.units.some(u => u.id === sel.unit && u.owner === 0 && u.type === "spear")) },
-  { h: "", t: "Tap the raider, then press Attack.", target: () => (st.units.find(u => u.owner === 1) || {}).i, done: () => !st.units.some(u => u.owner === 1) },
-  { h: "", t: "Tap the Builder.", target: () => (myBuilders()[0] || {}).i, done: () => sel && sel.unit && myBuilders().some(u => u.id === sel.unit) },
-  { h: "", t: "Tap the house to move in.", target: capital, done: () => myBuilders().some(u => u.i === capital()) },
+  { h: "", get t() { return tooFar() ? TOO_FAR : "Tap the raider, then press Attack."; }, target: () => (st.units.find(u => u.owner === 1) || {}).i, done: () => !st.units.some(u => u.owner === 1) },
+  { h: "", get t() { return tooFar() ? TOO_FAR : "Tap the Builder."; }, target: () => (myBuilders()[0] || {}).i, done: () => sel && sel.unit && myBuilders().some(u => u.id === sel.unit) },
+  { h: "", get t() { const u = E.unitAt(st, capital()); return u && u.owner === 0 && u.type !== "builder" ? "Your Spear is in the house. Move it out (or End turn), then bring the Builder in." : tooFar() ? TOO_FAR : "Tap the house to move in."; }, target: capital, done: () => myBuilders().some(u => u.i === capital()) },
   { h: "", t: "Press Wall +1.", done: () => st.wall[capital()] > 0 },
   { h: "", t: "Press End turn. The sea rises after your next turn.", done: () => st.turn >= 2 && st.cur === 0 && !busy },
   { h: "", t: "Press End turn. Watch the sea.", done: () => st.sea >= 1 && st.cur === 0 && !busy },
@@ -4430,7 +4578,7 @@ $("hintX").addEventListener("click", () => {
   if (coach !== null) endCoach(); else if (tipNow) { tipNow = null; coachUpdate(); } else quietTurn = st.turn;
   render();
 });
-const coachTarget = () => coach !== null && COACH[coach] && COACH[coach].target ? COACH[coach].target() : -1;
+const coachTarget = () => coach !== null && COACH[coach] && COACH[coach].target && !tooFar() ? COACH[coach].target() : -1;
 
 // ribbon icons, one per kind of news
 const TI = {
@@ -4870,14 +5018,52 @@ function modeEnd(e) {
     showCard(banner(won ? "Victory" : st.winner === 1 ? "Defeat" : "Tie", won ? "win" : "lose") + "<h2>" + island.name + "</h2>" + tally, back);
   }
 }
+// ---------- the full game (MO 11-06): one purchase opens islands 3-7, Daily Tide and Endless ----------
+// a dev host with ?all counts as bought (purchase.js devUnlock: localhost / LAN only, never itch or the app)
+const lockedIsle = id => needsFull(save, id) && !devUnlock();
+const lockedMode = m => modeNeedsFull(save, m) && !devUnlock();
+let fullPrice = "$3.99", gateThen = null;
+function unlockFull() {
+  if (save.full) return;
+  save.full = true; writeSave(save);
+  if (!$("overlay").hidden && $("gateNote")) { $("overlay").hidden = true; const go = gateThen; gateThen = null; if (go) go(); }
+}
+initPurchase({
+  onUnlock: unlockFull,
+  onPrice: p => { fullPrice = p; if ($("gateBuy")) $("gateBuy").textContent = "Unlock for " + p; },
+  onNote: t => { if ($("gateNote")) $("gateNote").textContent = t; },
+  isOwned: () => !!save.full,
+});
+// then: what to open once bought (the island or mode that was tapped)
+function showGate(then) {
+  gateThen = then || null;
+  const free = ISLANDS.filter(l => l.ready && l.free).map(l => l.name), all = ISLANDS.filter(l => l.ready).length;
+  showCard(banner("The full game", "sea") + "<h2>Sail on</h2>" +
+    '<p class="story">' + free.join(" and ") + " are free. The full game opens all " + all + " islands, the Daily Tide and Endless.</p>" +
+    '<p class="small">One purchase. No ads.</p>' +
+    '<div class="cardBtns"><button type="button" id="gateBuy">Unlock for ' + fullPrice + '</button>' +
+    (IS_NATIVE ? '<button type="button" class="link" id="gateRestore">Restore purchase</button>' : "") + "</div>" +
+    '<p class="small" id="gateNote" aria-live="polite"></p>',
+    [["Not now", () => { gateThen = null; }, "link"]]);
+  $("gateBuy").addEventListener("click", buy);
+  if ($("gateRestore")) $("gateRestore").addEventListener("click", async () => {
+    const b = $("gateRestore"); if (b.disabled) return;
+    b.disabled = true; b.textContent = "Checking...";
+    const said = await restore();
+    if (!$("gateRestore")) return;
+    b.disabled = false; b.textContent = said;
+    setTimeout(() => { if ($("gateRestore")) b.textContent = "Restore purchase"; }, 3000);
+  });
+}
 // start a match in one of the modes (modes.js); the journey uses startIsland
 function startMode(m, id) {
+  if (lockedMode(m) || (m !== "daily" && lockedIsle(id))) { showGate(() => startMode(m, id)); return; }
   if (m === "daily") { const key = dayKey(); startIsland(dailyIsland(key).id, "daily", dailySeed(key)); }
   else startIsland(id, m);
 }
 // the islands you have reached, for Skirmish and Endless
 function pickIsland(m) {
-  const open = ISLANDS.filter(l => l.ready && isOpen(save, l.id));
+  const open = ISLANDS.filter(l => l.ready && isOpen(save, l.id) && !lockedIsle(l.id));
   const difs = Object.keys(DIFFICULTY).map(k => '<button type="button" class="dif' + (save.difficulty === k ? " on" : "") + '" data-dif="' + k + '">' + DIFFICULTY[k].label + "</button>").join("");
   showCard(banner(m === "endless" ? "Endless" : "Skirmish", "sea") + "<h2>Pick an island</h2>" +
     '<div class="islePick">' + open.map(l => '<button type="button" class="link" data-isle="' + l.id + '">' + l.name + "</button>").join("") + "</div>" +
@@ -4892,7 +5078,7 @@ function showModes() {
   const key = dayKey(), today = dailyIsland(key), m = save.modes;
   const dailyBest = m.daily && m.daily.key === key ? " Your best today: " + m.daily.best + " land." : "";
   const endBest = m.endless ? Math.max(0, ...Object.values(m.endless)) : 0;
-  const row = (id, h, p) => '<div class="modeRow"><h3>' + h + "</h3><p>" + p + '</p><button type="button" data-mode="' + id + '">Play</button></div>';
+  const row = (id, h, p) => '<div class="modeRow"><h3>' + h + "</h3><p>" + p + '</p><button type="button" data-mode="' + id + '">' + (lockedMode(id) ? "Full game" : "Play") + "</button></div>";
   showCard(banner("Ways to play", "sea") +
     row("skirmish", "Skirmish", "Any island you have reached. One quick match.") +
     row("daily", "Daily Tide", "Today: " + today.name + ". The same tide for everyone." + dailyBest) +
@@ -4900,7 +5086,8 @@ function showModes() {
     [["Back to the chart", () => {}, "link"]]);
   $("card").querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => {
     $("overlay").hidden = true;
-    if (b.dataset.mode === "daily") startMode("daily"); else pickIsland(b.dataset.mode);
+    if (lockedMode(b.dataset.mode)) showGate(() => showModes());
+    else if (b.dataset.mode === "daily") startMode("daily"); else pickIsland(b.dataset.mode);
   }));
 }
 
@@ -4925,6 +5112,7 @@ function chartNote(msg) {
   clearTimeout(noteTimer);
 }
 function briefing(id) {
+  if (lockedIsle(id)) { showGate(() => briefing(id)); return; }
   const l = islandById(id);
   const difs = Object.keys(DIFFICULTY).map(k => '<button type="button" class="dif' + (save.difficulty === k ? " on" : "") + '" data-dif="' + k + '">' + DIFFICULTY[k].label + "</button>").join("");
   const got = starsOn(save, id);
@@ -4959,10 +5147,12 @@ function startIsland(id, m = "journey", seed) {
 function resumeMatch() {
   const m = savedMatch();
   if (!m) return;
+  if (lockedIsle(m.island) || lockedMode(m.mode)) { showGate(resumeMatch); return; }
   mode = m.mode || "journey";
   island = modeIsland(islandById(m.island), mode);
   applyLook(island);
   st = E.thaw(m.st);
+  st.cfg.noTrain = islandById(m.island).train === false;
   sel = null; aim = null; busy = false; cutShown = false; view.z = 1; view.x = view.y = 0; resetThoughts();
   $("chart").hidden = true; $("app").hidden = false;
   coach = null;
@@ -5170,6 +5360,16 @@ $("actions").addEventListener("wheel", ev => {
   if (el.scrollWidth > el.clientWidth + 2 && Math.abs(ev.deltaY) > Math.abs(ev.deltaX)) { el.scrollLeft += ev.deltaY; ev.preventDefault(); }
 }, { passive: false });
 $("lettersBtn").addEventListener("click", ev => { ev.stopPropagation(); menuOpen(false); if (st && !busy) techCard(); });
+// Android Back (app only, @capacitor/app): close the menu, else the card's own way out (its last link button:
+// Not now, Back, Keep playing), else in a match ask to leave, else on the chart close the app
+function onBack() {
+  if (!$("menu").hidden) { menuOpen(false); return; }
+  if (!$("overlay").hidden) { const out = [...$("card").querySelectorAll(".cardBtns button.link")].pop(); if (out) out.click(); return; }
+  if (!$("app").hidden) { if (!busy) leaveIsland(); return; }
+  const A = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (A) A.exitApp();
+}
+if (IS_NATIVE && window.Capacitor.Plugins && window.Capacitor.Plugins.App) window.Capacitor.Plugins.App.addListener("backButton", onBack);
 $("resumeBtn").addEventListener("click", resumeMatch);
 $("modesBtn").addEventListener("click", showModes);
 $("rulesBtn").addEventListener("click", () => rulesCard(false));
@@ -5179,7 +5379,7 @@ window.addEventListener("resize", () => { if (st && !$("app").hidden) { layout()
 showChart();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (st && !$("app").hidden) { layout(); render(); } else showChart(); });
 // test hook for tools/drive scripts (headless screenshots)
-window.__ldl = { finale, journeyCard, showEnd, sel: () => sel, thinking: () => thought && thought.text, say: (unit, text) => { thought = { unit, text, t0: performance.now() - 500 }; draw(); }, beast: k => maybeBeast(k || "whale"), sit: () => situation(), nums: id => letterNumbers(id), mark: () => rivalMark, note: () => rivalNote, geo: () => ({ ...geo, view: { ...view } }), showModes, startMode, resumeMatch, briefing, help, state: () => st, tap: onTile, busy: () => busy, startIsland, showChart, save: () => save };
+window.__ldl = { onBack, finale, journeyCard, showEnd, sel: () => sel, thinking: () => thought && thought.text, say: (unit, text) => { thought = { unit, text, t0: performance.now() - 500 }; draw(); }, beast: k => maybeBeast(k || "whale"), sit: () => situation(), nums: id => letterNumbers(id), mark: () => rivalMark, note: () => rivalNote, geo: () => ({ ...geo, view: { ...view } }), showModes, startMode, resumeMatch, briefing, help, state: () => st, tap: onTile, busy: () => busy, startIsland, showChart, save: () => save };
 
 return {  };
 })();
